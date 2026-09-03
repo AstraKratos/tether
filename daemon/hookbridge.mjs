@@ -50,12 +50,18 @@ export class HookBridge {
     req.on('end', () => {
       let payload = {};
       try { payload = JSON.parse(body || '{}'); } catch {}
-      const event = (req.url || '').replace('/hook/', '');
+      const url = req.url || '';
+      const event = url.replace('/hook/', '');
       const sid = payload.session_id ?? null;
       const reply = (obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
       try {
+        // Not a hook: permission-mcp.mjs, wired in as --permission-prompt-tool. Unlike the
+        // hooks above this one is SUPPOSED to block — the CLI is waiting on a decision it
+        // could not make itself, and holds the turn until the answer comes back.
+        if (url === '/permission') return this.permissionRequest(sid, payload, reply, res);
         switch (event) {
-          case 'PreToolUse': return this.preToolUse(sid, payload, reply);
+          case 'PreToolUse': this.recordPending(sid, payload); return reply({}); // observe only
+          case 'PermissionRequest': return this.permissionGate(sid, payload, reply, res);
           case 'Stop': this.h.onStop?.(sid); return reply({});
           case 'Notification': this.h.onNotification?.(sid, payload.message ?? '', this.pendingTool.get(sid) ?? null); return reply({});
           case 'UserPromptSubmit': this.h.onPromptSubmit?.(sid); return reply({});
@@ -78,15 +84,113 @@ export class HookBridge {
     });
   }
 
-  preToolUse(sessionId, payload, reply) {
+  /**
+   * PermissionRequest: the CLI has ALREADY decided a human must answer this call. The agent
+   * is stopped regardless of what we do here — so holding adds no interference, only a
+   * second place to answer from. That is the one channel that reaches a session with no
+   * terminal (IDE-hosted, plain shell), where a prompt can otherwise only be answered at
+   * the machine. Nothing here predicts or guesses: we never see a call the CLI would have
+   * approved on its own.
+   */
+  permissionGate(sessionId, payload, reply, res) {
     this.recordPending(sessionId, payload);
-    return reply({}); // never gate — the CLI decides, and we mirror only what it asks
+    if (!this.h.canHold?.()) return reply({}); // nobody watching, or switched off: local prompt as usual
+
+    const id = randHex(8);
+    const deadline = Date.now() + this.approvalTimeoutMs;
+    const entry = { resolve: reply, sessionId, kind: 'gate', toolInput: payload.tool_input ?? {} };
+    entry.timer = setTimeout(() => {
+      // Nobody answered. Reply with NO decision so the CLI's own flow runs untouched — a
+      // timeout must never become an approval, or Tether would be overriding real rules.
+      if (this.pending.delete(id)) {
+        this.log(`gate ${id} expired; handing back to the local permission flow`);
+        this.h.onApprovalSettled?.(id, 'expired');
+        try { reply({}); } catch {}
+      }
+    }, this.approvalTimeoutMs);
+    this.pending.set(id, entry);
+    res?.on('close', () => {
+      if (this.pending.delete(id)) {
+        clearTimeout(entry.timer);
+        this.log(`gate ${id} abandoned (the turn ended before it was answered)`);
+        this.h.onApprovalSettled?.(id, 'expired');
+      }
+    });
+    this.log(`gating ${payload.tool_name ?? '?'} as ${id} for session ${sessionId ?? '?'}`);
+    this.h.onApprovalOpen?.({
+      id, sessionId, deadline,
+      toolName: payload.tool_name ?? '?', toolInput: payload.tool_input ?? {},
+      cwd: payload.cwd ?? null, permissionMode: payload.permission_mode ?? null,
+    });
+    return undefined; // held; `reply` is called by settle() or by the timer above
+  }
+
+  /**
+   * A `claude -p` run has reached a call the CLI could not decide on its own. There is no
+   * terminal to prompt, so this is the last word: mirror it to the web UI and wait.
+   *
+   * No timeout by design. The CLI holds the turn for as long as the callback takes, and a
+   * deadline here would silently deny work the moment someone put their phone down. The
+   * caller can still give up; if the socket closes we drop the entry and stop tracking it.
+   */
+  permissionRequest(sessionId, payload, reply, res) {
+    const id = randHex(8);
+    const req = {
+      id, sessionId,
+      toolName: payload.tool_name ?? '?',
+      toolInput: payload.input ?? {},
+      toolUseId: payload.tool_use_id ?? null,
+      // AskUserQuestion is a question, not a permission check: the UI renders its choices
+      // and the answer travels back inside updatedInput.
+      kind: (payload.tool_name === 'AskUserQuestion') ? 'question' : 'permission',
+      cwd: payload.cwd ?? null,
+    };
+    this.pending.set(id, { resolve: reply, sessionId, kind: req.kind, toolInput: req.toolInput });
+    // The run can be interrupted or killed while we hold. Without this the entry would sit
+    // in `pending` forever and the card would stay live in the UI for a call that is gone.
+    res?.on('close', () => {
+      if (this.pending.delete(id)) {
+        this.log(`permission ${id} abandoned (the run ended before it was answered)`);
+        this.h.onApprovalSettled?.(id, 'expired');
+      }
+    });
+    this.log(`permission request ${id}: ${req.toolName} (${req.kind}) for session ${sessionId ?? '?'}`);
+    this.h.onPermissionRequest?.(req);
+    return undefined; // held: `reply` is called later, by settlePermission
+  }
+
+  /**
+   * Answer a held permission request. `result` is the shape Claude Code expects back:
+   *   { behavior: 'allow', updatedInput? }  |  { behavior: 'deny', message? }
+   * Returns false when the id is unknown (already answered, or the run gave up).
+   */
+  settlePermission(id, result, by = 'remote') {
+    const p = this.pending.get(id);
+    if (!p) return false;
+    this.pending.delete(id);
+    clearTimeout(p.timer);
+    // An answered question comes back as `answers` alone; Claude Code wants the original
+    // questions echoed alongside them, and we are the side still holding those.
+    const answered = result?.answers
+      ? { questions: p.toolInput?.questions ?? [], answers: result.answers }
+      : null;
+    const out = result?.behavior === 'allow'
+      ? { behavior: 'allow', updatedInput: result.updatedInput ?? answered ?? p.toolInput }
+      : { behavior: 'deny', message: result?.message || `Denied from Tether${by ? ` (${by})` : ''}` };
+    p.resolve(out);
+    this.h.onApprovalSettled?.(id, out.behavior === 'allow' ? 'allow' : 'deny');
+    this.log(`permission ${id} settled: ${out.behavior} by ${by}`);
+    return true;
   }
 
   // decision: 'allow' | 'deny' | null (no decision -> local fallback)
   settle(id, decision, by = 'remote') {
     const p = this.pending.get(id);
     if (!p) return false;
+    // A gated hook wants { decision } back; the MCP prompt tool wants { behavior }.
+    if (p.kind === 'permission' || p.kind === 'question') {
+      return this.settlePermission(id, { behavior: decision === 'allow' ? 'allow' : 'deny' }, by);
+    }
     this.pending.delete(id);
     clearTimeout(p.timer);
     p.resolve({ decision, decidedBy: decision ? by : null });

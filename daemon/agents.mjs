@@ -20,7 +20,11 @@ const saveJSON = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true });
 function nestedBuild(cmd, events) {
   const out = {};
   for (const [ev, matcher] of Object.entries(events)) {
-    const entry = { hooks: [{ type: 'command', command: cmd(ev), timeout: ev === 'PreToolUse' ? 60 : 10 }] };
+    // PreToolUse can be held open while somebody answers on their phone, so the CLI-side
+    // timeout has to allow for a human, not a script. It is the hard ceiling: when it
+    // lapses the CLI kills the hook and prompts locally, so it must sit ABOVE the daemon's
+    // own approvalTimeoutSec, which is the deadline we actually want to fire.
+    const entry = { hooks: [{ type: 'command', command: cmd(ev), timeout: ev === 'PermissionRequest' ? 900 : 10 }] };
     if (matcher) entry.matcher = matcher;
     out[ev] = [entry];
   }
@@ -70,7 +74,11 @@ export const INTEGRATIONS = {
     bins: ['claude'],
     config: () => path.join(HOME, '.claude', 'settings.json'),
     roots: () => [path.join(HOME, '.claude', 'projects')],
-    events: { PreToolUse: 'Bash|Write|Edit|NotebookEdit|ExitPlanMode|AskUserQuestion', Stop: null, Notification: null, UserPromptSubmit: null },
+    // PermissionRequest is the gate. It fires only AFTER the CLI has decided a human must
+    // answer — so holding it never invents a prompt the agent would not have raised, and
+    // costs nothing on the calls it approves by itself. No matcher: a prompt is a prompt,
+    // whatever tool raised it. PreToolUse only observes (it feeds the mirror with context).
+    events: { PermissionRequest: null, PreToolUse: 'Bash|Write|Edit|NotebookEdit|ExitPlanMode|AskUserQuestion|mcp__', Stop: null, Notification: null, UserPromptSubmit: null },
     install(cfg, cmd) { return nestedMerge(cfg, nestedBuild(cmd, this.events)); },
     remove: nestedStrip,
   },

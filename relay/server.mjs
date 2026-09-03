@@ -251,7 +251,10 @@ function onClientMessage(ws, m) {
         return send(ws, { type: 'approval_resolved', approvalId: m.approvalId, status: settled?.status ?? 'expired', decidedBy: settled?.decided_by ?? null, lostRace: true });
       }
       const dws = daemons.get(a.device_id);
-      if (dws) send(dws, { type: 'approval_result', approvalId: m.approvalId, decision, decidedBy: ws.meta.name ?? 'client' });
+      // answersCt carries the reply to an AskUserQuestion. Routed opaquely: it is sealed
+      // with the approval's own key, so the relay moves it without being able to read it.
+      if (dws) send(dws, { type: 'approval_result', approvalId: m.approvalId, decision,
+                           decidedBy: ws.meta.name ?? 'client', answersCt: m.answersCt ?? null });
       broadcast(accountId, { type: 'approval_resolved', approvalId: m.approvalId, status, decidedBy: ws.meta.name ?? 'client' });
       break;
     }
@@ -479,7 +482,9 @@ const server = http.createServer(async (req, res) => {
       const clientToken = randB64u(32);
       q.insertClient.run(randHex(8), accountId, String(name ?? 'client').slice(0, 64), sha256hex(clientToken), now(), now());
       log(`client linked: "${name}" for account ${accountId}`);
-      return json(res, 200, { clientToken });
+      // tell the new browser whether this account has an email login, so it knows whether
+      // logging out here is recoverable (the email itself is already the account's own)
+      return json(res, 200, { clientToken, email: q.accountById.get(accountId)?.email ?? null });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/pair') {

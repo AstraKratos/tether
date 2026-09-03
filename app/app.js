@@ -148,8 +148,8 @@ async function loginWithCode() {
       body: JSON.stringify({ accountId: parsed.a, linkToken: parsed.t, name }),
     });
     if (!res.ok) return err(`Login failed: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
-    const { clientToken } = await res.json();
-    cfg = { accountId: parsed.a, accountSecret: parsed.k, clientToken, name };
+    const { clientToken, email } = await res.json();
+    cfg = { accountId: parsed.a, accountSecret: parsed.k, clientToken, name, email: email ?? undefined };
     try { localStorage.setItem('tether', JSON.stringify(cfg)); }
     catch { alert('Heads up: this browser is blocking site storage (private window?). Tether will work until you close the tab, then you will need to log in again with a link code.'); }
     boot();
@@ -312,7 +312,8 @@ async function handle(m) {
                                                  options: note?.options ?? null,
                                                  answerable: !!note?.answerable, pane: note?.pane ?? null, reason: note?.reason ?? null };
       else delete s.ask;
-      renderFleet(); renderApprovals(); if (S.current === k) renderPaneHeader();
+      renderFleet(); renderApprovals();
+      if (S.current === k) { renderPaneHeader(); renderTranscript(); } // show/hide the responding row
       if (S.current === k && m.state === 'idle' && INSP.open) refreshChanges();
       if (note && (m.state === 'waiting_input' || m.state === 'idle')) {
         notify(`${sessName(s) ?? m.sessionId}: ${m.state === 'idle' ? 'finished' : 'needs input'}`, note.message ?? '',
@@ -742,6 +743,7 @@ async function refreshLiveTarget(store) {
     store.__live = false;
     chk.checked = false;
   }
+  syncOptsForLive(!!store.__live);
 }
 
 function redrawAgentOpts() {
@@ -969,13 +971,19 @@ function renderTranscript(autoscroll = true) {
     else if (e.kind === 'system') html += `<div class="ev system"><div class="body">${esc(e.text)}</div></div>`;
     else html += `<div class="ev unknown">${esc(e.text ?? e.kind)}</div>`;
   }
+  const st = S.sessions.get(S.current)?.state;
+  // Mid-turn the transcript just sits there: the next event can be a minute away. Say it is
+  // working where the answer will appear, not only as a pill up in the header.
+  const responding = st === 'running'
+    ? `<div class="ev responding"><span class="spinner"></span><span>responding<i>.</i><i>.</i><i>.</i></span></div>`
+    : '';
   if (!list.length) {
     const dev = S.devices.get(S.current.split('/')[0]);
     html = dev?.syncing
       ? `<div class="loading-pane"><span class="spinner big"></span><p class="hint">Syncing this session…</p></div>`
-      : `<p class="hint center">No events yet in this session.</p>`;
+      : responding || `<p class="hint center">No events yet in this session.</p>`;
   } else {
-    const st = S.sessions.get(S.current)?.state;
+    html += responding;
     html += `<div class="jumpwrap"><button id="jumpLatest" class="jump" ${S.follow ? 'hidden' : ''}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
       <span>Jump to latest${st ? ` · ${esc(STATE_LABEL[st] ?? st)}` : ''}</span></button></div>`;
@@ -1038,14 +1046,18 @@ function renderApprovals() {
   }
   html += mine.map((a) => {
     const body = approvalBody(a.req);
-    return `<div class="approval">
-      <div class="head"><span class="tool">${esc(a.req.toolName ?? 'tool')}</span>
+    const q = isQuestion(a.req) && Array.isArray(a.req.toolInput?.questions) && a.req.toolInput.questions.length;
+    return `<div class="approval${q ? ' isq' : ''}" data-card="${esc(a.approvalId)}">
+      <div class="head"><span class="tool">${esc(q ? 'Claude is asking you' : (a.req.toolName ?? 'tool'))}</span>
         <span class="where">${esc(a.req.cwd ?? '')}</span>
         <span class="count" data-deadline="${a.deadline}"></span></div>
       ${body}
       <div class="row">
-        <button class="allow" data-id="${esc(a.approvalId)}" data-d="allow">Approve</button>
-        <button class="deny" data-id="${esc(a.approvalId)}" data-d="deny">Deny</button>
+        ${q
+          ? `<button class="allow" data-send="${esc(a.approvalId)}">Send answer</button>
+             <button class="deny" data-id="${esc(a.approvalId)}" data-d="deny">Cancel</button>`
+          : `<button class="allow" data-id="${esc(a.approvalId)}" data-d="allow">Approve</button>
+             <button class="deny" data-id="${esc(a.approvalId)}" data-d="deny">Deny</button>`}
       </div></div>`;
   }).join('');
 
@@ -1064,6 +1076,34 @@ function renderApprovals() {
     b.addEventListener('click', () => send({ type: 'approve', approvalId: b.dataset.id, decision: b.dataset.d })));
   el.querySelectorAll('button[data-go]').forEach((b) =>
     b.addEventListener('click', () => select(b.dataset.go)));
+  // Pick an option: single-select replaces the choice within its question, multi toggles.
+  el.querySelectorAll('button.aqopt').forEach((b) => b.addEventListener('click', () => {
+    const box = b.closest('.aq');
+    if (!box) return;
+    if (!box.dataset.multi) box.querySelectorAll('.aqopt').forEach((o) => { if (o !== b) o.classList.remove('sel'); });
+    b.classList.toggle('sel');
+    box.classList.remove('needs');
+  }));
+  // Answer the question. Claude expects { questions, answers } back; the daemon still holds
+  // the original questions, so only the answers travel — encrypted like every other payload.
+  el.querySelectorAll('button[data-send]').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.send;
+    const card = el.querySelector(`.approval[data-card="${id}"]`);
+    if (!card) return;
+    const answers = {};
+    let missing = 0;
+    card.querySelectorAll('.aq').forEach((box) => {
+      const picked = [...box.querySelectorAll('.aqopt.sel')].map((o) => o.dataset.label);
+      if (!picked.length) { missing++; box.classList.add('needs'); return; }
+      answers[box.dataset.q] = box.dataset.multi ? picked : picked[0];
+    });
+    if (missing) return; // every question needs an answer before this means anything
+    b.disabled = true;
+    try {
+      const answersCt = await encryptJSON(await deriveKey(cfg.accountSecret, `approval:${id}`), { answers });
+      send({ type: 'approve', approvalId: id, decision: 'allow', answersCt });
+    } catch (e) { b.disabled = false; alert(`Could not send the answer: ${e.message}`); }
+  }));
   el.querySelectorAll('button[data-ans]').forEach((b) =>
     b.addEventListener('click', async () => {
       b.disabled = true;
@@ -1077,16 +1117,23 @@ function renderApprovals() {
 // options, so show them instead of dumping raw JSON.
 function approvalBody(req) {
   const i = req.toolInput ?? {};
-  if (req.toolName === 'AskUserQuestion' && Array.isArray(i.questions) && i.questions.length) {
-    return i.questions.map((q) => `<div class="aq">
-      <div class="aq-q">${esc(q.question ?? q.header ?? 'Question')}</div>
-      ${Array.isArray(q.options) ? `<ul class="aq-o">${q.options.map((o) =>
-        `<li><b>${esc(o.label ?? o)}</b>${o.description ? ` — ${esc(o.description)}` : ''}</li>`).join('')}</ul>` : ''}
-    </div>`).join('') + `<p class="dlg-hint">Approving lets the question through; pick the actual answer in the session.</p>`;
+  if (isQuestion(req) && Array.isArray(i.questions) && i.questions.length) {
+    // Pick the answer HERE. Approving an AskUserQuestion without one sends Claude an empty
+    // answer set, which is worse than useless — it looks answered and says nothing.
+    return i.questions.map((q, qi) => `<div class="aq" data-qi="${qi}" data-q="${esc(q.question ?? '')}" data-multi="${q.multiSelect ? '1' : ''}">
+      <div class="aq-q">${esc(q.question ?? q.header ?? 'Question')}${q.multiSelect ? ' <em>(choose any)</em>' : ''}</div>
+      <div class="aq-opts">${(q.options ?? []).map((o) => {
+        const label = o.label ?? String(o);
+        return `<button type="button" class="aqopt" data-qi="${qi}" data-label="${esc(label)}">
+          <b>${esc(label)}</b>${o.description ? `<span>${esc(o.description)}</span>` : ''}</button>`;
+      }).join('')}</div>
+    </div>`).join('');
   }
   if (req.toolName === 'ExitPlanMode' && i.plan) return `<pre>${esc(String(i.plan).slice(0, 1500))}</pre>`;
   return `<pre>${esc(previewLong(req))}</pre>`;
 }
+// The daemon tags these; fall back to the tool name for anything it did not tag.
+const isQuestion = (req) => req?.kind === 'question' || req?.toolName === 'AskUserQuestion';
 function previewLong(req) {
   const i = req.toolInput ?? {};
   if (i.command) return i.command.slice(0, 1500);
@@ -1180,6 +1227,7 @@ async function sendPrompt() {
   const bodyCt = await encryptJSON(await deriveKey(cfg.accountSecret, `prompt:${promptId}`), body);
   send({ type: 'prompt', promptId, deviceId, sessionId, bodyCt });
   $('promptText').value = '';
+  autosize($('promptText')); // back to one row once it is sent
   pendingImgs.length = 0;
   renderAttachments();
 }
@@ -1250,11 +1298,13 @@ function agentOptsControls(container, agent, store, { usage = false, deviceId = 
         return `<option value="${esc(m.id)}" ${m.disabled ? 'disabled' : ''} ${store[s.k] === m.id ? 'selected' : ''}
           title="${esc(m.reason ?? m.desc ?? '')}">${esc(label)}${m.disabled ? ` (${esc(m.reason ?? 'unavailable')})` : ''}</option>`;
       };
-      // "default" means no --model flag — say which model that actually is right now,
-      // taken from the last turn the session really ran
-      const liveModel = s.live ? meta?.[s.live] : null;
-      const live = liveModel ? ` — now: ${modelName(liveModel)}` : '';
-      const aliases = list.filter((m) => m.alias).map((m) => m.id === 'default' ? { ...m, desc: (live ? `now: ${modelName(liveModel)}` : m.desc) } : m);
+      // "default" means no --model flag, so it resolves to the CLI's CONFIGURED default —
+      // not to whatever model happened to serve the last turn. Labelling it with the latter
+      // made a one-off pick (a single Fable turn) read as if it were the machine default.
+      const cliDefault = S.agentInfo.get(deviceId)?.claudeDefaultModel ?? null;
+      const live = cliDefault ? ` — ${modelName(cliDefault)}` : '';
+      const aliases = list.filter((m) => m.alias).map((m) => m.id === 'default'
+        ? { ...m, desc: cliDefault ? `CLI default: ${modelName(cliDefault)}` : m.desc } : m);
       const full = list.filter((m) => !m.alias);
       opts = (list.some((m) => m.id === 'default') ? ''
         : `<option value="default" ${!store[s.k] || store[s.k] === 'default' ? 'selected' : ''}>default (CLI config)${esc(live)}</option>`)
@@ -1279,8 +1329,28 @@ function agentOptsControls(container, agent, store, { usage = false, deviceId = 
   const chk = container.querySelector('#liveChk');
   if (chk) {
     chk.checked = !!store.__live;
-    chk.addEventListener('change', () => { store.__live = chk.checked; });
+    chk.addEventListener('change', () => { store.__live = chk.checked; syncOptsForLive(chk.checked); });
+    syncOptsForLive(!!store.__live);
     refreshLiveTarget(store); // async: reveals the toggle only if a live pane exists
+  }
+}
+
+// Live delivery drives the TUI that is already running — `/model <id>` sets the model and
+// shift+tab cycles the permission mode — so both selections still apply. Only these two
+// modes sit off that cycle: they can be set when a session starts, and not after.
+const LIVE_OFF_CYCLE = ['bypassPermissions', 'dontAsk'];
+function syncOptsForLive(on) {
+  const sel = $('agentOpts')?.querySelector('select[data-k="mode"]');
+  if (!sel) return;
+  for (const el of sel.options) {
+    if (!LIVE_OFF_CYCLE.includes(el.value)) continue;
+    el.disabled = on;
+    el.title = on ? 'Only settable when a session starts — untick "live terminal" to run with this mode.' : '';
+  }
+  if (on && LIVE_OFF_CYCLE.includes(sel.value)) { // don't leave a mode selected that can't be sent
+    sel.value = 'default';
+    const store = S.agentOpts.get(S.current);
+    if (store) store.mode = 'default';
   }
 }
 async function openUsage() {
@@ -1468,7 +1538,21 @@ $('attachBtn2')?.addEventListener('click', attachEmailLogin);
 $('loginBtn')?.addEventListener('click', loginWithCode);
 $('linkBtn')?.addEventListener('click', openLink);
 $('logoutBtn')?.addEventListener('click', () => {
-  if (!confirm('Log out and forget this account on this browser? You can sign back in with your email + password (or a link code from another device). Without either, the encryption key cannot be recovered.')) return;
+  // Logging out is purely local — it clears this browser and calls nothing on the relay.
+  // Paired machines authenticate over their own Ed25519 device keys, so they keep syncing
+  // and never need re-pairing. Only an account with no email login is actually at risk, so
+  // don't show that warning to everyone: it made a safe action look destructive.
+  if (!cfg?.email) {
+    // Offer the remedy rather than just naming it: this dialog is the first time most people
+    // learn the account has no way back in, and the fix is two fields away.
+    if (confirm('This account has no email login yet, so logging out would leave no way back in except a one-time code from another signed-in device.\n\nSet an email + password now? Your machines keep running either way.\n\nOK = set it up · Cancel = log out anyway')) {
+      openLink(); // the same dialog carries "set an email login for this account"
+      return;
+    }
+    if (!confirm('Log out anyway and forget this account on this browser?\n\nWithout an email login or a link code from another device, the encryption key cannot be recovered.')) return;
+  } else if (!confirm(`Log out on this browser?\n\nYour paired machines stay connected and keep syncing — this only clears this browser. Sign back in any time as ${cfg.email}.`)) {
+    return;
+  }
   localStorage.removeItem('tether');
   location.reload();
 });
@@ -1540,6 +1624,39 @@ setInterval(() => {
   if (el.scrollHeight - el.scrollTop - el.clientHeight >= 2) pinToLatest();
 }, 600);
 
+// Scrollbars are painted only while the *user* is scrolling (style.css hides the thumb otherwise).
+// Programmatic scrolls — the transcript pinning itself to a streaming reply — must not reveal
+// them, so a scroll event only counts when a wheel, touch, key or scrollbar drag happened just
+// before it. Scroll events don't bubble, so everything is caught in the capture phase.
+const SCROLLBAR_LINGER_MS = 900;
+const scrollbarTimers = new WeakMap();
+let userScrollUntil = 0;
+const noteUserScroll = (ms = 200) => { userScrollUntil = Math.max(userScrollUntil, Date.now() + ms); };
+const passiveCapture = { capture: true, passive: true };
+window.addEventListener('wheel', () => noteUserScroll(), passiveCapture);
+window.addEventListener('touchmove', () => noteUserScroll(), passiveCapture);
+window.addEventListener('touchend', () => noteUserScroll(1500), passiveCapture); // momentum after lift
+window.addEventListener('keydown', (e) => {
+  if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) noteUserScroll();
+}, passiveCapture);
+// A press in the gutter (past the content box of something scrollable) is a thumb drag: keep the
+// bar up until the pointer is released.
+window.addEventListener('pointerdown', (e) => {
+  const el = e.target;
+  if (!(el instanceof Element) || el.clientWidth === 0) return;
+  const scrolls = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
+  if (scrolls && (e.offsetX >= el.clientWidth || e.offsetY >= el.clientHeight)) noteUserScroll(60_000);
+}, passiveCapture);
+window.addEventListener('pointerup', () => { userScrollUntil = Math.min(userScrollUntil, Date.now() + 200); }, passiveCapture);
+document.addEventListener('scroll', (e) => {
+  if (Date.now() > userScrollUntil) return; // programmatic scroll: stay hidden
+  const el = e.target === document ? document.documentElement : e.target;
+  if (!(el instanceof Element)) return;
+  el.classList.add('scrolling');
+  clearTimeout(scrollbarTimers.get(el));
+  scrollbarTimers.set(el, setTimeout(() => el.classList.remove('scrolling'), SCROLLBAR_LINGER_MS));
+}, passiveCapture);
+
 // resizable session list — drag the divider; width survives reloads, double-click resets
 (() => {
   const rz = $('fleetResize');
@@ -1584,7 +1701,23 @@ $('composer')?.addEventListener('drop', (e) => {
   e.preventDefault(); $('composer').classList.remove('dragover');
   [...e.dataTransfer.files].forEach(addImage);
 });
-$('promptText')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendPrompt(); } });
+// A one-row box hides everything above the last line while you write. Grow it with the text
+// up to a ceiling, then let it scroll.
+const AUTOSIZE_MAX = 200;
+function autosize(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, AUTOSIZE_MAX)}px`;
+}
+// Enter sends, shift+Enter is a newline — but only where there is a real keyboard. On a touch
+// device shift+Enter is impractical, so Enter stays a newline there and the send button sends.
+const ENTER_SENDS = window.matchMedia('(pointer: fine)').matches;
+$('promptText')?.addEventListener('input', (e) => autosize(e.target));
+$('newText')?.addEventListener('input', (e) => autosize(e.target));
+$('promptText')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing) return; // never break IME composition
+  if (e.metaKey || e.ctrlKey || (ENTER_SENDS && !e.shiftKey)) { e.preventDefault(); sendPrompt(); }
+});
 
 window.addEventListener('unhandledrejection', (e) => {
   const el = $('setupErr');

@@ -2,6 +2,7 @@
 // Claude session, start a new one with a chosen agent CLI, and nothing else. Each agent
 // is invoked through a fixed argument template — never a shell, never arbitrary commands.
 import { spawn, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { terminalBackend } from './service.mjs';
 import os from 'node:os';
@@ -20,9 +21,33 @@ const AGENT_ARGS = {
 };
 const AGENT_BIN = { claude: 'claude', codex: 'codex', opencode: 'opencode', cursor: 'cursor-agent', gemini: 'gemini', aider: 'aider' };
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PERMISSION_MCP = path.join(HERE, 'permission-mcp.mjs');
+
+// Send permission prompts to the web UI instead of nowhere. A headless `-p` run has no
+// terminal, so without this anything the CLI cannot decide by itself simply fails.
+//
+// This does not weaken or bypass auto mode: Claude Code resolves hooks, deny rules, ask
+// rules, the permission mode (the auto-mode classifier) and allow rules FIRST, and only
+// calls the prompt tool for what is left over. We are the last step, not a replacement.
+// No --strict-mcp-config: the user's own MCP servers must keep working.
+const permissionArgs = (sessionId) => [
+  '--mcp-config', JSON.stringify({
+    mcpServers: {
+      tether: {
+        command: process.execPath,
+        args: [PERMISSION_MCP],
+        env: sessionId ? { TETHER_SESSION_ID: sessionId } : {},
+      },
+    },
+  }),
+  '--permission-prompt-tool', 'mcp__tether__permission_prompt',
+];
+
 // per-agent runtime options from the web UI, whitelisted here before touching argv
 const MODEL_RE = /^[A-Za-z0-9 ._\/:@,-]{1,100}$/;
-const CLAUDE_MODES = new Set(['acceptEdits', 'plan', 'bypassPermissions']);
+// exactly what `claude --permission-mode` accepts (verified against Claude Code 2.1.258)
+const CLAUDE_MODES = new Set(['acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan']);
 const CODEX_SANDBOX = new Set(['read-only', 'workspace-write']);
 
 export class Executor {
@@ -50,6 +75,7 @@ export class Executor {
       args = ['--resume', job.sessionId];
       if (model) args.push('--model', model);
       if (CLAUDE_MODES.has(o.mode)) args.push('--permission-mode', o.mode);
+      args.push(...permissionArgs(job.sessionId));
       args.push('-p', job.text);
     } else {
       const agent = AGENT_ARGS[job.agent] ? job.agent : 'claude';
@@ -58,6 +84,7 @@ export class Executor {
       if (agent === 'claude') {
         if (model) args.push('--model', model);
         if (CLAUDE_MODES.has(o.mode)) args.push('--permission-mode', o.mode);
+        args.push(...permissionArgs(null)); // brand-new session: no id to pass through yet
       } else if (agent === 'codex') {
         if (o.sandbox === 'full-auto') args.splice(1, 0, '--full-auto');
         else if (CODEX_SANDBOX.has(o.sandbox)) args.splice(1, 0, '--sandbox', o.sandbox);

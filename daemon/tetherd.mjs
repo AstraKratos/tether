@@ -364,6 +364,51 @@ function cmdRun() {
     tmux(['send-keys', '-t', paneId, 'Enter']);
   }
 
+  // shift+tab cycles the TUI through these four, in this order (verified against Claude
+  // Code 2.1.258); the TUI calls 'default' "manual". bypassPermissions and dontAsk are not
+  // on the cycle, so a session already running cannot be switched into them.
+  // Setting the model on a live TUI must NOT touch the machine default. The inline form
+  // (`/model sonnet`) answers "saved as your default for new sessions", and typing a row's
+  // number confirms it the same way — both were measured. Only the picker's `s` says "for
+  // this session only", so drive the picker: open it, walk down to the row, press s.
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const MODEL_ROW = {
+    default: 'default', opus: 'opus', 'opus[1m]': 'opus (1m context)', fable: 'fable',
+    'fable[1m]': 'fable (1m context)', sonnet: 'sonnet', 'sonnet[1m]': 'sonnet (1m context)',
+    haiku: 'haiku', opusplan: 'opus plan', best: 'best available',
+  };
+  const normRow = (t) => String(t ?? '').toLowerCase().replace(/[^a-z0-9( )]/g, '').trim();
+  const pickerRow = (paneId) => {
+    const line = tmux(['capture-pane', '-t', paneId, '-p']).split('\n').find((l) => /\u276f\s*\d+\./.test(l));
+    // cut the description off at the column gap so 'sonnet' cannot match a neighbouring row
+    return line ? normRow(line.replace(/.*\u276f\s*\d+\.\s*/, '').split(/ {2,}/)[0]) : null;
+  };
+  async function setModelForSession(paneId, model) {
+    const want = normRow(MODEL_ROW[model] ?? model);
+    injectToPane(paneId, '/model');
+    await pause(1200);
+    for (let i = 0; i < 14; i++) {
+      const row = pickerRow(paneId);
+      if (row && (row === want || row.startsWith(want))) {
+        tmux(['send-keys', '-t', paneId, '-l', 's']);
+        await pause(600);
+        return true;
+      }
+      tmux(['send-keys', '-t', paneId, 'Down']);
+      await pause(450);
+    }
+    tmux(['send-keys', '-t', paneId, 'Escape']); // never fall back to the inline form
+    await pause(400);
+    return false;
+  }
+
+  const MODE_CYCLE = ['default', 'acceptEdits', 'plan', 'auto'];
+  const modeIdx = (m) => MODE_CYCLE.indexOf(m === 'manual' ? 'default' : m);
+  const modeSteps = (from, to) => {
+    const a = modeIdx(from ?? 'default'), b = modeIdx(to);
+    return a < 0 || b < 0 ? null : (b - a + MODE_CYCLE.length) % MODE_CYCLE.length;
+  };
+
   const runPrompt = (job) => {
     const report = (status, detail) => {
       if (status === 'failed') noteError(`prompt ${job.promptId}: ${detail}`);
@@ -379,10 +424,30 @@ function cmdRun() {
       if (job.live) {
         const pane = paneForSession(job.sessionId);
         if (!pane) return report('failed', 'no live tmux pane found for this session');
-        try { injectToPane(pane.id, job.text); }
-        catch (e) { return report('failed', `live delivery failed: ${e.message}`); }
-        log(`live: delivered prompt ${job.promptId} to pane ${pane.id} (${pane.label})`);
-        return report('done', `delivered to live terminal ${pane.label}`);
+        // Apply the chosen model and mode to the running TUI through its own controls, then
+        // type the message. Both are session-scoped: neither writes to ~/.claude/settings.json.
+        const o = job.opts ?? {};
+        (async () => {
+          const applied = [];
+          try {
+            if (o.model && o.model !== s.liveModel) {
+              const ok = await setModelForSession(pane.id, o.model);
+              if (ok) s.liveModel = o.model; // don't re-run the picker for every message
+              applied.push(ok ? `model → ${o.model} (this session only)` : `model ${o.model} not offered by the picker`);
+            }
+            const turns = o.mode ? modeSteps(s.meta.permissionMode, o.mode) : 0;
+            if (o.mode && turns === null) applied.push(`mode ${o.mode} needs a fresh run`);
+            else if (turns) {
+              for (let i = 0; i < turns; i++) { tmux(['send-keys', '-t', pane.id, 'BTab']); await pause(350); }
+              applied.push(`mode → ${o.mode}`);
+            }
+            await pause(400);
+            injectToPane(pane.id, job.text);
+          } catch (e) { return report('failed', `live delivery failed: ${e.message}`); }
+          log(`live: delivered prompt ${job.promptId} to pane ${pane.id} (${pane.label})${applied.length ? ` [${applied.join(', ')}]` : ''}`);
+          report('done', `delivered to live terminal ${pane.label}${applied.length ? ` — ${applied.join(', ')}` : ''}`);
+        })();
+        return;
       }
       if (s.state !== 'idle') { s.queue.push(job); return report('queued', 'session is mid-turn; will run when idle'); }
       job.cwd = job.cwd || s.meta.cwd;
@@ -439,12 +504,33 @@ function cmdRun() {
     state.offsets, log);
 
   // ---- hooks
+  //
+  // Whether a PermissionRequest may be held for the web UI. The CLI has already decided a
+  // human must answer, so the agent is stopped either way; the only question is whether
+  // anyone can answer from the UI. No heuristics belong here — they belonged to the old
+  // PreToolUse gate, which had to GUESS whether a prompt was coming. This one is told.
+  const canHold = () => cfg.remoteApprovals !== false && watchers > 0;
+
   const bridge = new HookBridge({
+    canHold,
     onApprovalOpen: (a) => {
       markState(a.sessionId, 'waiting_approval');
       const requestCt = C.encryptJSON(C.deriveKey(id.accountSecret, `approval:${a.id}`),
         { toolName: a.toolName, toolInput: a.toolInput, cwd: a.cwd, permissionMode: a.permissionMode });
       transport.send({ type: 'approval_open', approvalId: a.id, sessionId: a.sessionId, deadline: a.deadline, requestCt });
+    },
+    // A `claude -p` run this machine started has hit something the CLI could not decide.
+    // It is blocked until we answer, and there is no terminal to answer it at — so this is
+    // the one place a decision genuinely has to come from the web UI.
+    onPermissionRequest: (r) => {
+      markState(r.sessionId, 'waiting_approval');
+      const requestCt = C.encryptJSON(C.deriveKey(id.accountSecret, `approval:${r.id}`),
+        { toolName: r.toolName, toolInput: r.toolInput, cwd: r.cwd, kind: r.kind });
+      // No real deadline — the run waits indefinitely — but the relay only lists approvals
+      // whose deadline is still ahead, so give it one far enough out to stay visible.
+      transport.send({ type: 'approval_open', approvalId: r.id, sessionId: r.sessionId,
+                       deadline: Date.now() + 86_400_000, requestCt });
+      log(`permission request ${r.id} (${r.kind}: ${r.toolName}) sent to the web UI`);
     },
     onApprovalSettled: (approvalId, outcome) => {
       if (outcome === 'expired') transport.send({ type: 'approval_update', approvalId, status: 'expired' });
@@ -480,7 +566,10 @@ function cmdRun() {
     },
     onPromptSubmit: (sid) => markState(sid, 'running'),
   }, {
-    approvalTimeoutMs: (cfg.approvalTimeoutSec ?? 25) * 1000,
+    // Long enough for a person to notice their phone and decide. 25s was a script's
+    // timeout, not a human's: the card expired before anyone could reach it, and the
+    // prompt fell back to the machine — which is the exact problem this exists to solve.
+    approvalTimeoutMs: (cfg.approvalTimeoutSec ?? 600) * 1000,
   }, log);
 
   // ---- health: a small self-report so the web UI can say exactly what this daemon is
@@ -649,7 +738,11 @@ function cmdRun() {
         }
         agents.push({ agent, bin, version: stripAnsi(ver).trim().split('\n')[0].slice(0, 60), models });
       }
-      agentsCache = { at: Date.now(), data: { agents } };
+      // What "default" really resolves to: `/model` writes the choice here. Absent means the
+      // CLI's own built-in default, which we cannot name — report null rather than guess.
+      let claudeDefaultModel = null;
+      try { claudeDefaultModel = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8')).model ?? null; } catch {}
+      agentsCache = { at: Date.now(), data: { agents, claudeDefaultModel } };
       return agentsCache.data;
     }
     if (req.op === 'projects') { // folders this machine has run sessions in before
@@ -803,7 +896,20 @@ function cmdRun() {
           const s = sessions.get(m.sessionId);
           if (s) { s.ackSeq = Math.max(s.ackSeq, m.upTo); s.inflight = false; flush(s.sid); maybeSyncDone(); }
         } else if (m.type === 'approval_result') {
-          bridge.settle(m.approvalId, m.decision === 'allow' ? 'allow' : 'deny', m.decidedBy ?? 'remote');
+          const by = m.decidedBy ?? 'remote';
+          if (m.decision === 'allow' && m.answersCt) {
+            // Someone answered a question in the web UI. Only the answers travelled; the
+            // questions are still here, and settlePermission puts the two back together.
+            try {
+              const { answers } = C.decryptJSON(C.deriveKey(id.accountSecret, `approval:${m.approvalId}`), m.answersCt);
+              bridge.settlePermission(m.approvalId, { behavior: 'allow', answers }, by);
+            } catch (e) {
+              noteError(`answer for ${m.approvalId} could not be read: ${e.message}`);
+              bridge.settlePermission(m.approvalId, { behavior: 'deny', message: 'Tether could not read that answer.' }, by);
+            }
+          } else {
+            bridge.settle(m.approvalId, m.decision === 'allow' ? 'allow' : 'deny', by);
+          }
         } else if (m.type === 'prompt_execute') {
           try {
             const body = C.decryptJSON(C.deriveKey(id.accountSecret, `prompt:${m.promptId}`), m.bodyCt);

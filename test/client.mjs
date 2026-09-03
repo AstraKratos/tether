@@ -14,7 +14,8 @@ import os from 'node:os';
 import * as C from '../daemon/crypto.mjs';
 
 const RELAY = process.env.RELAY ?? 'http://127.0.0.1:8787';
-const CREDS = path.join(os.homedir(), '.tether', 'testclient.json');
+// Overridable so a test run can point at a second account without clobbering the saved one.
+const CREDS = process.env.TETHER_TEST_CREDS ?? path.join(os.homedir(), '.tether', 'testclient.json');
 const cmd = process.argv[2];
 const load = () => JSON.parse(fs.readFileSync(CREDS, 'utf8'));
 const flag = (f) => process.argv.includes(f);
@@ -95,6 +96,16 @@ if (cmd === 'register') {
   const [id, decision] = [process.argv[3], process.argv[4] ?? 'allow'];
   await oneShot(c, { type: 'approve', approvalId: id, decision });
   console.log(`sent ${decision} for ${id}`);
+} else if (cmd === 'answer') {
+  // Reply to an AskUserQuestion the way the web UI does: only the answers travel, sealed
+  // with the approval's own key, and the daemon puts them back together with the questions.
+  //   client.mjs answer <approvalId> '{"Which one?":"Option A"}'
+  const c = load();
+  const id = process.argv[3];
+  const answers = JSON.parse(process.argv[4] ?? '{}');
+  const answersCt = C.encryptJSON(C.deriveKey(c.accountSecret, `approval:${id}`), { answers });
+  await oneShot(c, { type: 'approve', approvalId: id, decision: 'allow', answersCt });
+  console.log(`answered ${id}: ${JSON.stringify(answers)}`);
 } else if (cmd === 'prompt') {
   const c = load();
   const [deviceId, sessionId] = [process.argv[3], process.argv[4]];
@@ -112,7 +123,7 @@ if (cmd === 'register') {
   await oneShot(c, { type: 'prompt', promptId, deviceId, bodyCt });
   console.log(`new-session prompt ${promptId} sent to ${deviceId} in ${cwd}`);
 } else {
-  console.log('usage: client.mjs register|pair-code|listen|approve|prompt|new-session ...');
+  console.log('usage: client.mjs register|pair-code|listen|approve|answer|prompt|new-session ...');
   process.exit(1);
 }
 

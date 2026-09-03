@@ -177,9 +177,10 @@ textarea{resize:vertical}
 .aopt.live{gap:5px;color:var(--ok);cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px}
 .aopt.live input{accent-color:var(--ok);cursor:pointer;margin:0}
 #usageBody{min-width:380px;max-width:460px;margin:4px 0 12px;max-height:60vh;overflow-y:auto;
-  padding-right:14px;overscroll-behavior:contain;scrollbar-width:thin}
+  padding-right:14px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:transparent transparent}
+#usageBody.scrolling{scrollbar-color:var(--line2) transparent}
 #usageBody::-webkit-scrollbar{width:5px}
-#usageBody::-webkit-scrollbar-thumb{background:var(--line2);border:none;border-radius:999px}
+#usageBody.scrolling::-webkit-scrollbar-thumb{background:var(--line2);border:none;border-radius:999px}
 #usageBody::-webkit-scrollbar-track{background:transparent}
 .usec{margin:16px 0 4px;font:700 11px/1 "Hanken Grotesk",sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .usec:first-child{margin-top:2px}
@@ -256,6 +257,15 @@ textarea{resize:vertical}
 .pill.idle,.pill.completed{color:var(--dim);background:rgba(255,255,255,.04)}
 .pill.waiting_approval{color:var(--accent-ink);background:var(--warn);font-weight:700}
 .pill.waiting_input{color:var(--warn);background:var(--warn-soft)}
+.pill.running::before{content:'';display:inline-block;width:7px;height:7px;margin-right:6px;
+  vertical-align:-1px;border-radius:50%;background:var(--ok);animation:pulse 1.4s ease-in-out infinite}
+.ev.responding{display:flex;align-items:center;gap:9px;padding:10px 2px;color:var(--ok);
+  font:600 11px/1 "JetBrains Mono",monospace;letter-spacing:.02em}
+.ev.responding .spinner{border-color:currentColor;border-top-color:transparent}
+.ev.responding i{font-style:normal;animation:blink 1.4s infinite}
+.ev.responding i:nth-child(2){animation-delay:.2s}
+.ev.responding i:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,60%,100%{opacity:.2}30%{opacity:1}}
 
 /* ---------------- pane ---------------- */
 #pane{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--panel)}
@@ -390,10 +400,23 @@ details.tcol[open] > summary .tprev{visibility:hidden}
 .att .rm{position:absolute;top:2px;right:2px;width:17px;height:17px;border-radius:50%;border:none;padding:0;
   background:rgba(0,0,0,.68);color:#fff;font:700 11px/1 sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .att .rm:hover{background:var(--danger)}
-#promptText{flex:1;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 14px;
-  font:inherit;font-size:14px;min-height:46px;max-height:200px;line-height:1.5}
-.send{padding:12px;border-radius:12px;align-self:stretch;width:48px;justify-content:center}
-.send svg{width:18px;height:18px}
+/* The box is the input: textarea on top, a fixed-height control row inside it. The buttons
+   used to be siblings of the textarea in an align-items:flex-end row, and `.send` carried
+   align-self:stretch — so the send button grew taller as the message did. */
+.inputbox{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;
+  background:var(--panel2);border:1px solid var(--line2);border-radius:14px;
+  padding:8px 8px 8px 12px;transition:border-color .12s}
+.inputbox:focus-within{border-color:var(--accent-line)}
+#promptText{width:100%;background:none;border:0;border-radius:0;padding:6px 4px 0;
+  font:inherit;font-size:14px;min-height:26px;max-height:200px;line-height:1.5;
+  resize:none;overflow-y:auto}
+#promptText:focus-visible{outline:none}
+#newText{max-height:200px;resize:none;overflow-y:auto}
+.inputbar{display:flex;align-items:center;gap:8px}
+.cspacer{flex:1}
+/* square and fixed — never stretches with the textarea */
+.cbtn{width:34px;height:34px;flex:0 0 34px;padding:0;justify-content:center;border-radius:10px}
+.cbtn svg{width:17px;height:17px}
 .qnote{font:500 12px/1.4 "JetBrains Mono",monospace;color:var(--warn);padding:0 22px 8px}
 
 /* ---------------- dialogs ---------------- */
@@ -407,9 +430,18 @@ pre.wrap{background:var(--code);border:1px solid var(--line2);border-radius:10px
   font:500 12px/1.55 "JetBrains Mono",monospace;color:var(--code-ink);white-space:pre-wrap;word-break:break-all;margin:0}
 .row{display:flex;gap:10px;margin-top:14px}
 
+/* Scrollbars stay invisible until their container actually scrolls: app.js puts .scrolling on
+   the element being scrolled and drops it after a short pause. The 10px gutter is kept so
+   nothing shifts when the thumb appears. */
 ::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px;border:2px solid var(--bg)}
-::-webkit-scrollbar-thumb:hover{background:#35454F}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:transparent;border-radius:6px;border:2px solid transparent}
+.scrolling::-webkit-scrollbar-thumb{background:var(--line2);border-color:var(--bg)}
+.scrolling::-webkit-scrollbar-thumb:hover{background:#35454F}
+@supports not selector(::-webkit-scrollbar){
+  *{scrollbar-color:transparent transparent}
+  .scrolling{scrollbar-color:var(--line2) transparent}
+}
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 
 @media (max-width:900px){ #inspector{display:none} }
@@ -446,6 +478,19 @@ pre.wrap{background:var(--code);border:1px solid var(--line2);border-radius:10px
 .aq-q{font-weight:600;margin-bottom:6px}
 .aq-o{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
 .aq-o li{margin:3px 0}
+/* selectable answers — the option IS the answer, so it has to be clickable, not a bullet */
+.aq-opts{display:flex;flex-direction:column;gap:6px;margin:8px 0 2px}
+.aqopt{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;
+  padding:9px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--panel2);
+  color:var(--text);cursor:pointer;font:inherit;font-size:13px;
+  transition:border-color .12s,background .12s}
+.aqopt:hover{border-color:var(--accent-line)}
+.aqopt.sel{border-color:var(--accent);background:var(--accent-soft)}
+.aqopt b{font-weight:600}
+.aqopt span{color:var(--dim);font-size:12px;font-weight:400}
+.aq-q em{color:var(--dim);font-style:normal;font-weight:400}
+.aq.needs .aq-q{color:var(--warn)}
+.aq.needs .aq-opts{outline:1px dashed var(--warn-line);outline-offset:5px;border-radius:10px}
 .approval.needsinput{border-color:var(--accent-line);
   background:linear-gradient(180deg,var(--accent-soft),rgba(255,90,52,.02))}
 .approval.needsinput .tool{color:var(--accent)}

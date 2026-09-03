@@ -4,9 +4,11 @@ Mirror your local AI coding sessions — **Claude Code**, **Cursor**, **Codex** 
 can open from your phone, get notified the moment one needs you, and answer its questions from
 anywhere.
 
-Tether **observes and relays; it never intervenes.** Its hooks emit nothing, so every agent's own
-permission logic runs exactly as if Tether were not installed. It mirrors a question only when the
-agent genuinely asks one.
+Tether **never changes what an agent does.** Every agent's own permission logic runs exactly as
+if Tether were not installed, and Tether never invents a prompt the agent would not have raised.
+What it adds is a second place to answer: when an agent genuinely stops to ask you something — a
+permission, a question, a plan to approve — that prompt appears in the web UI *and* in your
+terminal at the same time, and whichever you answer first wins.
 
 Transcripts are **end-to-end encrypted**: the relay stores ciphertext and routing metadata only.
 The account key lives in your browser and on paired machines; it travels only inside pairing
@@ -52,17 +54,29 @@ Then pair daemons with `--relay https://<your-host>`.
 
 ## Accounts: sign up, log in, link devices
 
-Tether is end-to-end encrypted, so there is no email/password login — the server never has
-your key, so it cannot "log you in". Instead (like Signal/WhatsApp device linking):
+Tether has ordinary email + password sign-in, and stays end-to-end encrypted while doing it.
+The trick is that your password never reaches the relay: the browser derives two values from
+it, an *auth hash* (sent, to prove who you are) and a *wrap key* (kept, never sent). The wrap
+key seals your account encryption key into a blob the relay stores but cannot open. Signing in
+downloads that blob and unwraps it locally.
 
-- **Sign up** — first device: *Create account* generates the account id, encryption key and
-  client token locally (browser localStorage).
-- **Log in** — every other browser/phone: on a logged-in device press **Link a device**, move
-  the one-time `TETHERC.…` code over a channel you trust, and paste it into **Log in** on the
-  new device. The new device gets its own revocable client token; the relay only ever sees a
-  hash of the code. Codes are one-time and expire in 10 minutes.
-- **Log out** — forgets the account on that browser. The key is unrecoverable from the server
-  by design, so keep at least one linked device (or a saved login code).
+- **Sign up** — *Create account* with an email and password. Account id and encryption key are
+  generated in the browser; the relay is handed the auth hash and the sealed key, nothing else.
+- **Sign in** — same email and password on any browser or phone. Each sign-in mints its own
+  client token, so signing in somewhere new never signs you out anywhere else.
+- **Log out** — clears that one browser and calls nothing on the relay. **Paired machines keep
+  running and stay connected**: daemons authenticate with their own Ed25519 device keys, which
+  have nothing to do with browser sessions. Sign back in whenever you like.
+- **Link a device** (optional) — a one-time `TETHERC.…` code, for signing in another browser
+  without typing the password, or for accounts created before email login existed. The relay
+  only ever sees a hash of the code; codes expire in 10 minutes.
+
+Each email is a separate account. Devices, sessions and events are scoped to an account id on
+every read and write, so two accounts on one relay never see each other's machines.
+
+The one irrecoverable case: an account with **no** email login, logged out of every browser.
+Then only a link code from a still-signed-in device can get back in. Set an email login from
+*Link a device* if you are in that position.
 
 ## Remote approvals
 
@@ -73,11 +87,30 @@ node daemon/tetherd.mjs hooks install --settings <project>/.claude/settings.json
 node daemon/tetherd.mjs hooks install --settings ~/.claude/settings.json          # everywhere
 ```
 
-`PreToolUse` (matcher `Bash|Write|Edit|NotebookEdit`) blocks up to 4 minutes waiting for a
-remote decision; if none arrives, it answers nothing and the normal local permission flow
-takes over. Tether can only ever *add* a way to answer, never lock you out. `Stop` /
-`Notification` hooks make state changes (finished / needs input) instant; sessions without
-hooks fall back to a 90s inactivity timer.
+Two mechanisms, chosen by how the session was started. Neither ever holds a call the agent
+would have approved on its own.
+
+**Interactive sessions** (a terminal, Cursor, VS Code — anything you started yourself) use the
+`PermissionRequest` hook. It fires only *after* Claude Code has decided a human must answer, so
+the agent is already stopped waiting; Tether holds that hook, puts a card in the web UI, and
+returns your decision. The local prompt stays on screen the whole time — answer at the machine
+or on your phone, first wins. No matcher: every tool that prompts is covered, MCP tools included.
+If nobody answers within `approvalTimeoutSec` (default 600s) the hook returns nothing and the
+local prompt simply remains. `PreToolUse` only observes, to give the mirror context.
+
+**Runs Tether starts itself** (a prompt or new session sent from the web UI) are headless and
+have no terminal to prompt at, so they get `--permission-prompt-tool` pointing at Tether's own
+MCP server. Claude Code calls it only for decisions it could not make itself — auto mode, allow
+rules and deny rules are all evaluated first — and the answer comes back from the web UI. For
+`AskUserQuestion` the card shows the actual choices and your pick is returned as the answer.
+
+`Stop` / `Notification` hooks make state changes (finished / needs input) instant; sessions
+without hooks fall back to a 90s inactivity timer.
+
+**What cannot be answered remotely:** the folder-trust dialog, login and OAuth prompts, sandbox
+network prompts and managed-settings approval. No hook fires for these — they happen outside any
+tool call — so they are shown in the UI but must be answered at the machine. Set
+`remoteApprovals: false` in `~/.tether/config.json` to turn remote approvals off entirely.
 
 ## Failure doctrine
 
