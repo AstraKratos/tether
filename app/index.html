@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tether</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23121316'/%3E%3Cline x1='37' y1='63' x2='63' y2='37' stroke='%23E7EDF2' stroke-width='8' stroke-linecap='round'/%3E%3Ccircle cx='35' cy='65' r='13' fill='%23FF5A34'/%3E%3Ccircle cx='65' cy='35' r='11' fill='none' stroke='%23E7EDF2' stroke-width='8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Bond logo, reused by reference -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <g id="bond">
+    <line x1="35" y1="65" x2="65" y2="35" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="33" cy="67" r="13" fill="#FF5A34"/>
+    <circle cx="67" cy="33" r="12" fill="none" stroke="currentColor" stroke-width="8"/>
+  </g>
+</defs></svg>
+
+<div id="setup" hidden>
+  <div class="setup-card">
+    <div class="setup-brand"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg><span>Tether</span></div>
+    <p class="setup-lede">Mirror your local Claude Code sessions, get pinged the moment one needs you, and answer — approve, reject, prompt — from anywhere. End-to-end encrypted; the key never leaves your devices.</p>
+    <label>Email<input id="setupEmail" type="email" placeholder="you@example.com" autocomplete="username"></label>
+    <label>Password<input id="setupPass" type="password" placeholder="min 8 characters" minlength="8" autocomplete="current-password"></label>
+    <label>Name this device<input id="setupName" placeholder="e.g. akhil-phone" maxlength="40" autocomplete="off"></label>
+    <button id="signinBtn" class="btn primary block">Sign in</button>
+    <button id="createBtn" class="btn block">Create account</button>
+    <div class="divider"><span>or use a one-time link code</span></div>
+    <label>Login code from another device<input id="loginCode" placeholder="TETHERC.…" autocomplete="off"></label>
+    <button id="loginBtn" class="btn block">Log in with code</button>
+    <p class="setup-hint">Each email is its own account — sessions, machines, and keys are fully isolated per account.</p>
+    <p class="err" id="setupErr"></p>
+  </div>
+</div>
+
+<div id="main" hidden>
+  <header class="topbar">
+    <div class="brand"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg><span>Tether</span></div>
+    <span class="live"><span id="connDot" class="dot off"></span><span class="live-t">connecting…</span></span>
+    <span class="spacer"></span>
+    <button id="notifBtn" class="btn ghost icon-btn" title="Enable notifications">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      <span>Notify</span>
+    </button>
+    <button id="linkBtn" class="btn ghost" title="Log another browser or phone into this account">Link device</button>
+    <button id="newBtn" class="btn primary">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+      <span>New session</span>
+    </button>
+    <button id="pairBtn" class="btn ghost">Pair a machine</button>
+    <button id="logoutBtn" class="btn ghost icon-only" title="Log out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+    </button>
+  </header>
+
+  <div id="connBanner" hidden>
+    <span>⚠ Connection to relay lost — retrying automatically…</span>
+    <button id="reconnBtn" class="btn ghost">Reconnect now</button>
+  </div>
+
+  <div class="cols">
+    <aside id="fleetWrap">
+      <div id="agentFilter" class="afilter" hidden></div>
+      <div id="fleet"></div>
+    </aside>
+    <div id="fleetResize" role="separator" aria-orientation="vertical" title="Drag to resize · double-click to reset"></div>
+    <section id="pane">
+      <div id="paneHeader"><span class="hint">Select a session</span></div>
+      <div id="approvals"></div>
+      <div id="transcript"><div class="empty"><svg class="empty-mk" viewBox="0 0 100 100"><use href="#bond"/></svg><p class="hint">No session selected. Pick one on the left, or pair a machine to get started.</p></div></div>
+      <form id="composer" hidden>
+        <div id="agentOpts" class="aoptrow" hidden></div>
+        <div id="attachStrip" hidden></div>
+        <div class="comprow">
+          <button type="button" id="attachBtn" class="btn ghost icon-only" title="Attach image — or paste / drop one">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15.5l-5-5L5 21"/></svg>
+          </button>
+          <textarea id="promptText" rows="1" placeholder="Continue this session… (runs when it's idle)"></textarea>
+          <button class="btn primary send" type="submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/></svg>
+          </button>
+        </div>
+        <input type="file" id="attachFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+      </form>
+    </section>
+    <aside id="inspector" hidden>
+      <div class="insp-top">
+        <span id="inspRepo" class="mono"></span>
+        <span class="spacer"></span>
+        <button id="inspRefresh" class="ibtn" title="Refresh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>
+        </button>
+        <button id="inspClose" class="ibtn" title="Close panel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div id="inspBody">
+        <div class="isec">
+          <button type="button" class="isec-h" data-s="changesList"><span class="chev">▾</span>Changes <span id="chCount"></span></button>
+          <div class="isec-b" id="changesList"></div>
+        </div>
+        <div class="isec">
+          <button type="button" class="isec-h" data-s="fileTree"><span class="chev">▾</span>Files</button>
+          <div class="isec-b" id="fileTree"></div>
+        </div>
+      </div>
+      <div id="inspView" hidden>
+        <div class="iview-h">
+          <button id="iviewBack" class="ibtn" title="Back">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg>
+          </button>
+          <span id="iviewTitle" class="mono"></span>
+        </div>
+        <pre id="iviewBody"></pre>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<dialog id="statusDlg">
+  <h3 id="stTitle">Device status</h3>
+  <div id="stBody"></div>
+  <div class="dlg-actions">
+    <button id="stDisconnect" class="btn danger">Disconnect machine</button>
+    <span class="spacer"></span>
+    <button id="stPing" class="btn ghost">Check now</button>
+    <button class="btn ghost" onclick="statusDlg.close()">Close</button>
+  </div>
+  <p class="dlg-hint">Disconnecting removes Tether's hooks from every AI agent on that machine and stops its sync service. Chat history stays here, and you can reconnect with <code>tetherd connect</code> — no new pairing code needed.</p>
+</dialog>
+
+<dialog id="usageDlg">
+  <h3>Session usage</h3>
+  <div id="usageBody"></div>
+  <div class="dlg-actions">
+    <button class="btn ghost" onclick="usageDlg.close()">Close</button>
+  </div>
+</dialog>
+
+<dialog id="pairDlg">
+  <h3>Pair a machine</h3>
+  <p class="dlg-p">On the machine that runs your AI agents, run these two commands. This installs
+    Tether, hooks up every agent it finds, and starts syncing to this relay.</p>
+  <pre id="pairCmd" class="wrap"></pre>
+  <div class="row">
+    <button id="pairCopy" class="btn primary">Copy command</button>
+    <button class="btn ghost" onclick="pairDlg.close()">Close</button>
+  </div>
+  <p class="dlg-hint">The code carries your encryption key to that machine — through you, never the relay. Expires in 10 minutes.</p>
+</dialog>
+
+<dialog id="linkDlg">
+  <h3>Link a device</h3>
+  <p class="dlg-p">Open Tether on the other device, choose <b>Log in</b>, and paste:</p>
+  <pre id="linkCode" class="wrap"></pre>
+  <div class="row">
+    <button id="linkCopy" class="btn primary">Copy code</button>
+    <button class="btn ghost" onclick="linkDlg.close()">Close</button>
+  </div>
+  <p class="dlg-hint">⚠ This code carries your encryption key. Move it over a channel you trust — not a chat app. One-time use, expires in 10 minutes.</p>
+  <div class="divider"><span>or set an email login for this account</span></div>
+  <label>Email<input id="attachEmail" type="email" placeholder="you@example.com" autocomplete="username"></label>
+  <label>Password<input id="attachPass" type="password" placeholder="min 8 characters" minlength="8" autocomplete="new-password"></label>
+  <button id="attachBtn2" class="btn block">Save email login</button>
+  <p class="dlg-hint" id="attachMsg">Then any device can sign in with email + password — no code needed.</p>
+</dialog>
+
+<dialog id="newDlg">
+  <h3>New session</h3>
+  <label>Machine<select id="newDevice"></select></label>
+  <div class="pick-h"><span>Agent</span></div>
+  <div id="agentPick" class="agentrow"></div>
+  <p id="agentNote" class="dlg-hint" hidden>This agent will run in the chosen folder, but live transcript mirroring currently supports Claude Code only — you won't see its chat here yet.</p>
+  <div id="agentOptsNew" class="aoptrow" hidden></div>
+  <label>Project folder<input id="newCwd" placeholder="/path/to/project — or pick below"></label>
+  <div class="pick-h"><span>Known projects</span><button type="button" id="browseBtn" class="btn ghost small">Browse folders…</button></div>
+  <div id="projList" class="picklist"></div>
+  <div id="browseBox" hidden>
+    <div class="browse-top">
+      <button type="button" id="browseUp" class="ibtn" title="Up one level">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+      <span id="browsePath" class="mono"></span>
+      <button type="button" id="browseUse" class="btn primary small">Use this folder</button>
+    </div>
+    <div id="browseList" class="picklist"></div>
+  </div>
+  <label>First prompt<textarea id="newText" rows="3"></textarea></label>
+  <label class="chkrow"><input type="checkbox" id="newInteractive" checked>
+    <span>Keep it interactive (runs in tmux) — lets you answer its permission prompts from here</span></label>
+  <div class="row">
+    <button id="newGo" class="btn primary">Start</button>
+    <button class="btn ghost" onclick="newDlg.close()">Cancel</button>
+  </div>
+</dialog>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

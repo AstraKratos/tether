@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# local runtime state — never commit these
+.tether/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+identity.json
+state.json
+
+# secrets
+.env
+.env.*
+*.pem
+*.key
+.npmrc
+
+# build & scratch
+design/
+*.tgz
+*.log
+logs/
+
+# os
+.DS_Store
+Thumbs.db

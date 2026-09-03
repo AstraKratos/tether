@@ -1,0 +1,51 @@
+{
+  "name": "@astrakratos/tetherd",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Mirror your local AI coding sessions (Claude Code, Cursor, Codex) to a web UI \u2014 watch them, answer their prompts, and steer them from anywhere. End-to-end encrypted.",
+  "keywords": [
+    "claude-code",
+    "cursor",
+    "codex",
+    "ai-agent",
+    "remote",
+    "mirror",
+    "hooks"
+  ],
+  "license": "MIT",
+  "bin": {
+    "tetherd": "daemon/tetherd.mjs"
+  },
+  "files": [
+    "daemon/",
+    "relay/",
+    "app/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "scripts": {
+    "relay": "node relay/server.mjs",
+    "daemon": "node daemon/tetherd.mjs run"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AstraKratos/tether.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/AstraKratos/tether#readme",
+  "bugs": {
+    "url": "https://github.com/AstraKratos/tether/issues"
+  }
+}
