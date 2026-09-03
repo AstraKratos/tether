@@ -63,6 +63,7 @@ const q = {
   insertApproval: db.prepare('INSERT INTO approvals(id, device_id, session_id, request_ct, status, deadline, created_at) VALUES (?,?,?,?,?,?,?)'),
   decideApproval: db.prepare("UPDATE approvals SET status = ?, decided_at = ?, decided_by = ? WHERE id = ? AND status = 'pending'"),
   expireApproval: db.prepare("UPDATE approvals SET status = 'expired' WHERE id = ? AND status = 'pending'"),
+  pendingForDevice: db.prepare("SELECT id FROM approvals WHERE device_id = ? AND status = 'pending'"),
   approvalById: db.prepare('SELECT * FROM approvals WHERE id = ?'),
   pendingApprovals: db.prepare(`SELECT a.* FROM approvals a JOIN devices d ON d.id = a.device_id
     WHERE d.account_id = ? AND a.status = 'pending' AND a.deadline > ? ORDER BY a.created_at`),
@@ -187,9 +188,18 @@ function onDaemonMessage(ws, m) {
       break;
     }
     case 'approval_update': {
-      if (m.status === 'expired') {
+      // The daemon is telling us a held prompt ended without a decision from the UI:
+      //   expired          — nobody answered before the deadline
+      //   resolved_locally — the session moved on (answered at the machine, or cancelled)
+      //   approved_locally — the tool ran, so it was approved at the machine or by auto mode
+      // All three retire the card; only the label differs. Anything else is ignored.
+      const st = m.status;
+      if (st === 'expired') {
         q.expireApproval.run(m.approvalId);
         broadcast(accountId, { type: 'approval_resolved', approvalId: m.approvalId, status: 'expired' });
+      } else if (st === 'resolved_locally' || st === 'approved_locally') {
+        q.decideApproval.run(st, now(), 'machine', m.approvalId);
+        broadcast(accountId, { type: 'approval_resolved', approvalId: m.approvalId, status: st, decidedBy: 'machine' });
       }
       break;
     }
@@ -327,6 +337,14 @@ wss.on('connection', (ws) => {
         const cursors = {};
         for (const r of q.maxSeqBySession.all(dev.id)) cursors[r.session_id] = r.m;
         send(ws, { type: 'authed', cursors });
+        // A daemon that just connected holds no gates: whatever it was holding died with the
+        // old process, and the hooks behind those cards have already exited silently. Left
+        // alone, the cards would sit in the UI looking live until their deadline. Retire them.
+        for (const { id } of q.pendingForDevice.all(dev.id)) {
+          q.expireApproval.run(id);
+          broadcast(dev.account_id, { type: 'approval_resolved', approvalId: id, status: 'expired' });
+          log(`approval ${id} expired: its daemon reconnected without it`);
+        }
         send(ws, { type: 'clients_present', watchers: clientCount(dev.account_id) });
         broadcast(dev.account_id, { type: 'device_presence', deviceId: dev.id, online: true, syncing: true, lastSeen: now() });
         for (const p of q.queuedPrompts.all(dev.id)) {

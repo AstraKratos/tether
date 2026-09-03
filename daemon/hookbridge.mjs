@@ -60,11 +60,22 @@ export class HookBridge {
         // could not make itself, and holds the turn until the answer comes back.
         if (url === '/permission') return this.permissionRequest(sid, payload, reply, res);
         switch (event) {
-          case 'PreToolUse': this.recordPending(sid, payload); return reply({}); // observe only
+          // A session is blocked on at most one prompt at a time, so any later lifecycle
+          // event from it means that prompt was resolved somewhere we could not see —
+          // answered at the machine, approved by auto mode, denied, or cancelled. The CLI
+          // does not kill our held hook in those cases; it just stops listening. So each of
+          // these events also releases our stale gates for the session and clears the card.
+          case 'PreToolUse':
+            this.resolveStaleGates(sid, 'a new tool call started', payload.tool_use_id ?? null);
+            this.recordPending(sid, payload); return reply({}); // observe only
+          case 'PostToolUse':
+            this.resolveGateFor(sid, payload.tool_use_id ?? null, 'approved_locally'); // the tool ran
+            this.resolveStaleGates(sid, 'a tool call completed');
+            return reply({});
           case 'PermissionRequest': return this.permissionGate(sid, payload, reply, res);
-          case 'Stop': this.h.onStop?.(sid); return reply({});
+          case 'Stop': this.resolveStaleGates(sid, 'the turn ended'); this.h.onStop?.(sid); return reply({});
           case 'Notification': this.h.onNotification?.(sid, payload.message ?? '', this.pendingTool.get(sid) ?? null); return reply({});
-          case 'UserPromptSubmit': this.h.onPromptSubmit?.(sid); return reply({});
+          case 'UserPromptSubmit': this.resolveStaleGates(sid, 'a new prompt was sent'); this.h.onPromptSubmit?.(sid); return reply({});
           default: return reply({});
         }
       } catch (e) { this.log(`hook route error: ${e.message}`); return reply({}); }
@@ -98,7 +109,7 @@ export class HookBridge {
 
     const id = randHex(8);
     const deadline = Date.now() + this.approvalTimeoutMs;
-    const entry = { resolve: reply, sessionId, kind: 'gate', toolInput: payload.tool_input ?? {} };
+    const entry = { resolve: reply, sessionId, kind: 'gate', toolInput: payload.tool_input ?? {}, toolUseId: payload.tool_use_id ?? null };
     entry.timer = setTimeout(() => {
       // Nobody answered. Reply with NO decision so the CLI's own flow runs untouched — a
       // timeout must never become an approval, or Tether would be overriding real rules.
@@ -181,6 +192,38 @@ export class HookBridge {
     this.h.onApprovalSettled?.(id, out.behavior === 'allow' ? 'allow' : 'deny');
     this.log(`permission ${id} settled: ${out.behavior} by ${by}`);
     return true;
+  }
+
+  /**
+   * Release a held gate without a decision. hook-exec receives {} and exits silently, the CLI
+   * (which already moved on) is untouched, and the relay is told so the card disappears.
+   */
+  releaseGate(id, p, outcome, why) {
+    this.pending.delete(id);
+    clearTimeout(p.timer);
+    try { p.resolve({}); } catch {}
+    this.h.onApprovalSettled?.(id, outcome);
+    this.log(`gate ${id} ${outcome} (${why})`);
+  }
+
+  /** The tool with this tool_use_id ran, so its prompt was approved — at the machine or by auto mode. */
+  resolveGateFor(sessionId, toolUseId, outcome) {
+    if (!toolUseId) return;
+    for (const [id, p] of this.pending) {
+      if (p.kind === 'gate' && p.sessionId === sessionId && p.toolUseId === toolUseId) {
+        return this.releaseGate(id, p, outcome, `tool ${toolUseId.slice(0, 12)} completed`);
+      }
+    }
+  }
+
+  /** Every gate still held for this session is stale once the session has moved on. */
+  resolveStaleGates(sessionId, why, exceptToolUseId = null) {
+    if (!sessionId) return;
+    for (const [id, p] of [...this.pending]) {
+      if (p.kind !== 'gate' || p.sessionId !== sessionId) continue;
+      if (exceptToolUseId && p.toolUseId === exceptToolUseId) continue;
+      this.releaseGate(id, p, 'resolved_locally', why);
+    }
   }
 
   // decision: 'allow' | 'deny' | null (no decision -> local fallback)

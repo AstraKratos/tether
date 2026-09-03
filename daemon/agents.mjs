@@ -78,7 +78,10 @@ export const INTEGRATIONS = {
     // answer — so holding it never invents a prompt the agent would not have raised, and
     // costs nothing on the calls it approves by itself. No matcher: a prompt is a prompt,
     // whatever tool raised it. PreToolUse only observes (it feeds the mirror with context).
-    events: { PermissionRequest: null, PreToolUse: 'Bash|Write|Edit|NotebookEdit|ExitPlanMode|AskUserQuestion|mcp__', Stop: null, Notification: null, UserPromptSubmit: null },
+    // PostToolUse exists to CLEAR cards: a tool that ran was approved somewhere — locally, or
+    // by auto mode — and the CLI does not kill our held hook when that happens, so without
+    // this the card would sit in the UI until its timer lapsed. Same matcher as PreToolUse.
+    events: { PermissionRequest: null, PreToolUse: 'Bash|Write|Edit|NotebookEdit|ExitPlanMode|AskUserQuestion|mcp__', PostToolUse: 'Bash|Write|Edit|NotebookEdit|ExitPlanMode|AskUserQuestion|mcp__', Stop: null, Notification: null, UserPromptSubmit: null },
     install(cfg, cmd) { return nestedMerge(cfg, nestedBuild(cmd, this.events)); },
     remove: nestedStrip,
   },

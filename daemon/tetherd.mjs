@@ -533,7 +533,10 @@ function cmdRun() {
       log(`permission request ${r.id} (${r.kind}: ${r.toolName}) sent to the web UI`);
     },
     onApprovalSettled: (approvalId, outcome) => {
-      if (outcome === 'expired') transport.send({ type: 'approval_update', approvalId, status: 'expired' });
+      // allow/deny came FROM the relay, which already knows. Everything else ended here —
+      // timed out, or the session moved past the prompt — and the UI has to be told, or
+      // the card sits there looking live for something that was settled minutes ago.
+      if (outcome !== 'allow' && outcome !== 'deny') transport.send({ type: 'approval_update', approvalId, status: outcome });
       for (const s of sessions.values()) if (s.state === 'waiting_approval' && !bridge.hasPendingFor(s.sid)) markState(s.sid, 'running');
     },
     onStop: (sid) => {
