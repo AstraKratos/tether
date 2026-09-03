@@ -145,6 +145,20 @@
   </div>
 </dialog>
 
+<dialog id="notifDlg">
+  <h3>Alerts</h3>
+  <p class="dlg-p" id="notifStatus"></p>
+  <label class="nrow"><input type="checkbox" id="notifBanners"> <span><b>Banners</b><small>Desktop notifications when a session needs you or an approval is waiting.</small></span></label>
+  <label class="nrow"><input type="checkbox" id="notifSound"> <span><b>Sound</b><small>A short tone for urgent alerts — approvals and questions.</small></span></label>
+  <div class="nrow ntest">
+    <button type="button" class="btn" id="notifTest">Send a test alert</button>
+    <span class="dlg-hint" id="notifResult"></span>
+  </div>
+  <div class="dlg-actions">
+    <button class="btn ghost" onclick="notifDlg.close()">Close</button>
+  </div>
+</dialog>
+
 <dialog id="pairDlg">
   <h3>Pair a machine</h3>
   <p class="dlg-p">On the machine that runs your AI agents, run these two commands. This installs

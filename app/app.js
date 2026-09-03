@@ -1497,16 +1497,44 @@ async function openPairing() {
 // Actionable alerts (approvals, needs-input) must reach you even with the tab focused:
 // a desktop notification when possible, always a sound + tab-title badge as a fallback.
 function notify(title, body, { urgent = false } = {}) {
-  if (urgent) beep();
+  if (urgent && NOTIF_PREF.sound) beep();
   if (!('Notification' in window)) return;
+  if (!NOTIF_PREF.banners) return; // the user turned banners off — honour it, whatever the browser allows
   if (Notification.permission === 'granted') {
     // when the tab is focused a banner is noise for routine events, but an urgent
     // one (something is blocked waiting on you) is worth showing regardless
     if (document.visibilityState === 'visible' && !urgent) return;
-    try { new Notification(title, { body: String(body ?? '').slice(0, 180), tag: title, renotify: false }); } catch {}
+    // A unique tag per alert, with renotify on. With tag=title the second "Approval needed:
+    // Bash" silently REPLACED the first — no sound, no banner — so repeat prompts vanished.
+    try {
+      new Notification(title, { body: String(body ?? '').slice(0, 180), tag: `${title}#${Date.now()}`, renotify: true });
+    } catch {}
   } else if (Notification.permission === 'default') {
-    $('notifBtn')?.classList.add('needs');
+    syncNotifButton(); // make the "alerts are off" state visible right now, not after the fact
   }
+}
+
+// Reflect the real permission state on the button from the moment the page loads. Before
+// this, the button read "Notify" in neutral styling whether alerts were off, blocked or on —
+// so someone who never clicked it had no way to know every alert was being dropped.
+function syncNotifButton() {
+  const b = $('notifBtn');
+  if (!b) return;
+  const label = b.querySelector('span');
+  const supported = 'Notification' in window;
+  const p = supported ? Notification.permission : 'unsupported';
+  const muted = p === 'granted' && !NOTIF_PREF.banners; // allowed by the browser, turned off by you
+  b.classList.toggle('needs', p === 'default');
+  b.classList.toggle('denied', p === 'denied' || p === 'unsupported');
+  b.classList.toggle('on', p === 'granted' && !muted);
+  b.classList.toggle('muted', muted);
+  if (label) label.textContent = muted ? 'Alerts off' : { default: 'Enable alerts', denied: 'Alerts blocked', granted: 'Alerts on', unsupported: 'No alerts' }[p];
+  b.title = muted ? 'Banners are turned off in Tether. Click to change.' : {
+    default: 'Browser notifications are OFF — click to allow them. Until then, every alert is dropped.',
+    denied: 'Your browser is blocking notifications for this site. Re-enable them via the lock icon in the address bar.',
+    granted: 'Alerts are on. Click for settings and a test alert.',
+    unsupported: 'Notifications need a secure origin: use https://, or open the app on localhost / 127.0.0.1.',
+  }[p];
 }
 let audioCtx = null;
 function beep() {
@@ -1527,6 +1555,7 @@ function beep() {
 function boot() {
   $('setup').hidden = true;
   $('main').hidden = false;
+  syncNotifButton(); // show the real alert state immediately, not after the first missed one
   connect();
   setInterval(renderFleet, 30_000); // refresh timeago
 }
@@ -1571,13 +1600,76 @@ $('stDisconnect')?.addEventListener('click', async () => {
   alert(`Disconnected.\n\n${(r.results ?? []).join('\n')}`);
   $('statusDlg').close();
 });
-$('notifBtn')?.addEventListener('click', async () => {
-  const r = await Notification.requestPermission();
-  $('notifBtn').classList.toggle('needs', r === 'default');
-  $('notifBtn').classList.toggle('denied', r === 'denied');
-  if (r === 'denied') alert('Your browser is blocking notifications for this site. Tether will still play a sound and badge the tab title; re-enable notifications in the site settings for banners.');
-  else if (r === 'granted') { beep(); notify('Tether notifications on', 'You will be alerted when a session needs you.'); }
+// Two separate things decide whether you get a banner: the BROWSER's permission (can it show
+// one at all) and YOUR preference (do you want them). The button used to handle only the
+// first. These are the second — per browser, default on.
+const NOTIF_PREF = {
+  get banners() { try { return localStorage.getItem('tether.alerts') !== 'off'; } catch { return true; } },
+  set banners(v) { try { localStorage.setItem('tether.alerts', v ? 'on' : 'off'); } catch {} },
+  get sound() { try { return localStorage.getItem('tether.sound') !== 'off'; } catch { return true; } },
+  set sound(v) { try { localStorage.setItem('tether.sound', v ? 'on' : 'off'); } catch {} },
+};
+
+function openNotifDlg() {
+  const supported = 'Notification' in window;
+  const p = supported ? Notification.permission : 'unsupported';
+  $('notifStatus').textContent = {
+    granted: 'Your browser allows notifications for this site.',
+    default: 'Your browser has not been asked yet — turn Banners on to be asked.',
+    denied: 'Your browser is BLOCKING notifications for this site. Allow them via the lock icon in the address bar, then reload.',
+    unsupported: 'No notification support on this origin. Use https://, or open Tether on localhost / 127.0.0.1.',
+  }[p];
+  $('notifBanners').checked = NOTIF_PREF.banners && p === 'granted';
+  $('notifBanners').disabled = p === 'denied' || p === 'unsupported';
+  $('notifSound').checked = NOTIF_PREF.sound;
+  $('notifTest').disabled = p !== 'granted';
+  $('notifResult').textContent = '';
+  $('notifDlg').showModal();
+}
+
+$('notifBtn')?.addEventListener('click', openNotifDlg);
+
+$('notifBanners')?.addEventListener('change', async (e) => {
+  if (e.target.checked && Notification.permission === 'default') {
+    // Turning banners on IS the user gesture the browser needs for the permission prompt.
+    const r = await Notification.requestPermission();
+    if (r !== 'granted') e.target.checked = false;
+  }
+  NOTIF_PREF.banners = e.target.checked;
+  syncNotifButton();
+  openNotifDlg(); // re-render status/checkbox from the real state
 });
+$('notifSound')?.addEventListener('change', (e) => { NOTIF_PREF.sound = e.target.checked; syncNotifButton(); });
+
+// The test answers "does a banner actually appear?" without guesswork: the Notification
+// object tells us whether the browser displayed it. Beep + shown = working. Beep + not shown
+// within 2.5s = the browser was allowed to try but macOS swallowed it (Notification settings
+// for the browser app, or a Focus mode). That distinction is invisible any other way.
+$('notifTest')?.addEventListener('click', () => {
+  const out = $('notifResult');
+  out.textContent = 'sending…';
+  if (NOTIF_PREF.sound) beep();
+  let settled = false;
+  const done = (msg) => { if (!settled) { settled = true; out.textContent = msg; } };
+  try {
+    const n = new Notification('Tether test alert', { body: 'If you can read this, banners work end to end.', tag: `test#${Date.now()}`, renotify: true });
+    n.onshow = () => done('✓ Banner shown by the browser.');
+    n.onerror = () => done('✗ The browser reported an error showing it.');
+    n.onclick = () => { window.focus(); n.close(); };
+    setTimeout(() => done('Sent, but the browser never reported it as shown — macOS is blocking notifications for this browser, or a Focus mode is on. Check System Settings → Notifications.'), 2500);
+  } catch (e) { done(`✗ ${e.message}`); }
+});
+
+// Browsers only allow the permission request from a user gesture. Rather than wait for a
+// click on the one button, ask on the FIRST click anywhere in the app while it is still
+// undecided — once per page load. Anyone who says no is never asked again by this path.
+if ('Notification' in window && Notification.permission === 'default') {
+  document.addEventListener('click', async function askOnce() {
+    document.removeEventListener('click', askOnce);
+    try { await Notification.requestPermission(); } catch {}
+    syncNotifButton();
+  }, { once: true });
+}
 $('newBtn')?.addEventListener('click', () => {
   $('newDevice').innerHTML = [...S.devices.values()].map((d) => `<option value="${esc(d.id)}" ${d.online ? '' : 'disabled'}>${esc(d.name)}${d.online ? '' : ' (offline)'}</option>`).join('');
   NEWS.browsePath = null;
