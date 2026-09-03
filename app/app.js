@@ -1624,38 +1624,98 @@ setInterval(() => {
   if (el.scrollHeight - el.scrollTop - el.clientHeight >= 2) pinToLatest();
 }, 600);
 
-// Scrollbars are painted only while the *user* is scrolling (style.css hides the thumb otherwise).
-// Programmatic scrolls — the transcript pinning itself to a streaming reply — must not reveal
-// them, so a scroll event only counts when a wheel, touch, key or scrollbar drag happened just
-// before it. Scroll events don't bubble, so everything is caught in the capture phase.
-const SCROLLBAR_LINGER_MS = 900;
-const scrollbarTimers = new WeakMap();
-let userScrollUntil = 0;
+// Native scrollbars are hidden everywhere (style.css). Instead one overlay thumb per axis is drawn
+// over whichever element the *user* is scrolling and fades out once they stop, so nothing is
+// visible while the page is still. Programmatic scrolls — the transcript pinning itself to a
+// streaming reply — never reveal them; they only keep an already-visible thumb accurate. Scroll
+// events don't bubble, so everything is caught in the capture phase.
+const SB_LINGER_MS = 900, SB_MIN = 24, SB_GAP = 2, SB_SIZE = 6;
+const sbThumbs = {
+  y: Object.assign(document.createElement('div'), { className: 'sb-thumb sb-y' }),
+  x: Object.assign(document.createElement('div'), { className: 'sb-thumb sb-x' }),
+};
+document.body.append(sbThumbs.y, sbThumbs.x);
+let sbTarget = null, sbHideTimer = 0, sbDrag = null, userScrollUntil = 0;
+const isRoot = (el) => el === document.documentElement;
+const sbMetrics = (el, axis) => (axis === 'y'
+  ? { view: isRoot(el) ? window.innerHeight : el.clientHeight, total: el.scrollHeight, pos: el.scrollTop }
+  : { view: isRoot(el) ? window.innerWidth : el.clientWidth, total: el.scrollWidth, pos: el.scrollLeft });
+// Position both thumbs for `el`; returns which axes actually overflow.
+function sbPlace(el) {
+  const rect = isRoot(el)
+    ? { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight }
+    : el.getBoundingClientRect();
+  const shown = { y: false, x: false };
+  for (const axis of ['y', 'x']) {
+    const t = sbThumbs[axis], { view, total, pos } = sbMetrics(el, axis);
+    if (view <= 0 || total <= view + 1) continue;
+    shown[axis] = true;
+    const track = view - SB_GAP * 2, len = Math.max(SB_MIN, Math.round(track * view / total));
+    const off = SB_GAP + (track - len) * (pos / (total - view));
+    if (axis === 'y') {
+      t.style.height = `${len}px`; t.style.top = `${rect.top + off}px`; t.style.left = `${rect.right - SB_GAP - SB_SIZE}px`;
+    } else {
+      t.style.width = `${len}px`; t.style.left = `${rect.left + off}px`; t.style.top = `${rect.bottom - SB_GAP - SB_SIZE}px`;
+    }
+  }
+  return shown;
+}
+const sbHide = () => { sbThumbs.y.classList.remove('on'); sbThumbs.x.classList.remove('on'); };
+function sbShow(el) {
+  const shown = sbPlace(el);
+  if (!shown.y && !shown.x) return;
+  sbTarget = el;
+  sbThumbs.y.classList.toggle('on', shown.y);
+  sbThumbs.x.classList.toggle('on', shown.x);
+  clearTimeout(sbHideTimer);
+  sbHideTimer = setTimeout(() => { if (!sbDrag) sbHide(); }, SB_LINGER_MS);
+}
 const noteUserScroll = (ms = 200) => { userScrollUntil = Math.max(userScrollUntil, Date.now() + ms); };
 const passiveCapture = { capture: true, passive: true };
 window.addEventListener('wheel', () => noteUserScroll(), passiveCapture);
 window.addEventListener('touchmove', () => noteUserScroll(), passiveCapture);
 window.addEventListener('touchend', () => noteUserScroll(1500), passiveCapture); // momentum after lift
 window.addEventListener('keydown', (e) => {
-  if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) noteUserScroll();
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) noteUserScroll();
 }, passiveCapture);
-// A press in the gutter (past the content box of something scrollable) is a thumb drag: keep the
-// bar up until the pointer is released.
-window.addEventListener('pointerdown', (e) => {
-  const el = e.target;
-  if (!(el instanceof Element) || el.clientWidth === 0) return;
-  const scrolls = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
-  if (scrolls && (e.offsetX >= el.clientWidth || e.offsetY >= el.clientHeight)) noteUserScroll(60_000);
-}, passiveCapture);
-window.addEventListener('pointerup', () => { userScrollUntil = Math.min(userScrollUntil, Date.now() + 200); }, passiveCapture);
 document.addEventListener('scroll', (e) => {
-  if (Date.now() > userScrollUntil) return; // programmatic scroll: stay hidden
   const el = e.target === document ? document.documentElement : e.target;
   if (!(el instanceof Element)) return;
-  el.classList.add('scrolling');
-  clearTimeout(scrollbarTimers.get(el));
-  scrollbarTimers.set(el, setTimeout(() => el.classList.remove('scrolling'), SCROLLBAR_LINGER_MS));
+  if (sbDrag?.el === el || Date.now() <= userScrollUntil) sbShow(el);
+  else if (sbTarget === el && (sbThumbs.y.classList.contains('on') || sbThumbs.x.classList.contains('on'))) sbPlace(el);
 }, passiveCapture);
+window.addEventListener('resize', sbHide);
+// The thumbs can be dragged like real scrollbars.
+for (const axis of ['y', 'x']) {
+  const t = sbThumbs[axis];
+  t.addEventListener('pointerdown', (e) => {
+    if (!sbTarget) return;
+    const { pos } = sbMetrics(sbTarget, axis);
+    sbDrag = { el: sbTarget, axis, start: axis === 'y' ? e.clientY : e.clientX, pos, behavior: sbTarget.style.scrollBehavior };
+    sbTarget.style.scrollBehavior = 'auto'; // a drag must track the pointer, not glide after it
+    t.classList.add('drag');
+    t.setPointerCapture(e.pointerId);
+    clearTimeout(sbHideTimer);
+    e.preventDefault();
+  });
+  t.addEventListener('pointermove', (e) => {
+    if (!sbDrag || sbDrag.axis !== axis) return;
+    const { view, total } = sbMetrics(sbDrag.el, axis);
+    const len = parseFloat(axis === 'y' ? t.style.height : t.style.width), track = view - SB_GAP * 2 - len;
+    if (track <= 0) return;
+    const delta = ((axis === 'y' ? e.clientY : e.clientX) - sbDrag.start) * (total - view) / track;
+    if (axis === 'y') sbDrag.el.scrollTop = sbDrag.pos + delta; else sbDrag.el.scrollLeft = sbDrag.pos + delta;
+  });
+  const end = () => {
+    if (!sbDrag || sbDrag.axis !== axis) return;
+    sbDrag.el.style.scrollBehavior = sbDrag.behavior;
+    sbDrag = null;
+    t.classList.remove('drag');
+    sbHideTimer = setTimeout(sbHide, SB_LINGER_MS);
+  };
+  t.addEventListener('pointerup', end);
+  t.addEventListener('pointercancel', end);
+}
 
 // resizable session list — drag the divider; width survives reloads, double-click resets
 (() => {
