@@ -511,8 +511,8 @@ psql -f migrations/042_add_index.sql</div></div><h3>Decrypts, renders, answers</
           <p>Same email, same password. Your key is unlocked in the page; nothing about your sessions is readable in between.</p>
         </div>
         <div class="next-cta">
-          <a class="btn primary" href="http://127.0.0.1:8787" target="_blank" rel="noopener">Open Tether — Sign in / Create account</a>
-          <small><code>127.0.0.1:8787</code> is the relay from step 1. Swap in your own relay's address once it's hosted.</small>
+          <a class="btn primary applink" href="http://127.0.0.1:8787" target="_blank" rel="noopener">Open Tether — Sign in / Create account</a>
+          <small class="appnote"><code>127.0.0.1:8787</code> is the relay from step 1. Swap in your own relay's address once it's hosted.</small>
         </div>
       </div>
     </div>
@@ -567,7 +567,7 @@ e2Ru5Io0Pa7Sd9Fg1Hj3Kl6Zx8Cv0Bn2Mq5Wt9Ye3Ru6
         <h2 style="margin-top:12px">Leave the desk. <span style="color:var(--ash)">Keep the session.</span></h2>
         <div class="cta">
           <div class="install"><span class="pr">$</span><code>npm i -g @astrakratos/tetherd</code></div>
-          <a class="btn primary" href="http://127.0.0.1:8787" target="_blank" rel="noopener">Sign in / Create account</a>
+          <a class="btn primary applink" href="http://127.0.0.1:8787" target="_blank" rel="noopener">Sign in / Create account</a>
           <a class="btn" href="#install">How to connect</a>
         </div>
       </div>
@@ -587,7 +587,16 @@ e2Ru5Io0Pa7Sd9Fg1Hj3Kl6Zx8Cv0Bn2Mq5Wt9Ye3Ru6
 </footer>
 
 <script>
-  // Copy the install command; the only script on the page.
+  // When the relay itself serves this page (at /welcome), the app is on this same host at /.
+  // Point every sign-in link there and drop the placeholder address. Anywhere else — GitHub
+  // Pages, a copy on disk — the links keep the documented default.
+  (function () {
+    if (location.pathname.replace(/\/$/, '') !== '/welcome') return;
+    document.querySelectorAll('a.applink').forEach(function (a) { a.href = '/'; a.removeAttribute('target'); });
+    var n = document.querySelector('.appnote');
+    if (n) n.textContent = 'This relay is serving the page, so Sign in opens the app right here.';
+  })();
+  // Copy the install command.
   (function () {
     var b = document.getElementById('copy'), c = document.getElementById('cmd');
     if (!b || !c) return;

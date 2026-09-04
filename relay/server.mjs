@@ -516,6 +516,17 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { deviceId });
     }
 
+    // The landing page — what Tether is and how to connect — for someone you point at your
+    // relay who has not installed anything yet. One fixed file, no path input, so it cannot
+    // be steered anywhere else. The app itself stays at /.
+    if (url.pathname === '/welcome' || url.pathname === '/welcome/') {
+      const landing = path.join(HERE, '..', 'site', 'index.html');
+      if (fs.existsSync(landing)) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return fs.createReadStream(landing).pipe(res);
+      }
+    }
+
     // static app
     let p = url.pathname === '/' ? '/index.html' : url.pathname;
     p = path.normalize(p).replace(/^(\.\.[\/\\])+/, '');

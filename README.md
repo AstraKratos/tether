@@ -38,6 +38,10 @@ node daemon/tetherd.mjs pair 'TETHER1.…' --relay http://127.0.0.1:8787 --name 
 node daemon/tetherd.mjs run      # or: node daemon/tetherd.mjs launchd install
 ```
 
+The relay also serves a landing page at `/welcome` — what Tether is, how it works, how to
+connect, with a sign-in link into the app — for anyone you point at your relay who hasn't
+installed it yet. The app itself is at `/`.
+
 ### Reaching it from a phone / tablet
 
 WebSockets work from any browser on any device — the app connects to whatever origin served
