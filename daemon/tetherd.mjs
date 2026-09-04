@@ -1045,6 +1045,63 @@ function cmdLaunchd() {
   console.log(`  launchctl bootout gui/$(id -u)/${label}`);
 }
 
+// The relay deserves the same treatment as the daemon. Started by hand it is an orphan: if
+// it crashes, or you log out, it stays down until someone notices and runs the command again
+// — and a relay that is down looks exactly like a relay that was never set up.
+function cmdRelayService() {
+  if (process.argv[3] !== 'install' && process.argv[3] !== 'uninstall') {
+    console.error('usage: tetherd relay-service install | uninstall');
+    process.exit(1);
+  }
+  const label = 'ai.tether.relay';
+  const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
+  if (process.platform !== 'darwin') {
+    console.error(`relay-service is macOS-only. On Linux, run the relay under a systemd user unit;
+on Windows, register it with Task Scheduler. The command is: ${process.execPath} ${path.join(HERE, 'tetherd.mjs')} relay`);
+    process.exit(1);
+  }
+  if (process.argv[3] === 'uninstall') {
+    try { fs.unlinkSync(plistPath); console.log(`Removed ${plistPath}`); }
+    catch { console.log(`No ${plistPath} to remove.`); }
+    console.log('Stop it now with:');
+    console.log(`  launchctl bootout gui/$(id -u)/${label}`);
+    return;
+  }
+  const self = path.join(HERE, 'tetherd.mjs');
+  const logPath = path.join(LOG_DIR, 'relay.launchd.log');
+  // Env vars are read at launch, so whatever you would have exported goes in here.
+  const env = { PATH: `/opt/homebrew/bin:/usr/local/bin:${os.homedir()}/.local/bin:/usr/bin:/bin` };
+  for (const k of ['TETHER_DB', 'HOST', 'PORT']) if (process.env[k]) env[k] = process.env[k];
+  const envXml = Object.entries(env).map(([k, v]) => `    <key>${k}</key><string>${v}</string>`).join('\n');
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key><array>
+    <string>${process.execPath}</string>
+    <string>${self}</string>
+    <string>relay</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${logPath}</string>
+  <key>StandardErrorPath</key><string>${logPath}</string>
+  <key>EnvironmentVariables</key><dict>
+${envXml}
+  </dict>
+</dict></plist>\n`;
+  fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+  fs.writeFileSync(plistPath, plist);
+  console.log(`Wrote ${plistPath}`);
+  if (env.TETHER_DB || env.HOST || env.PORT) {
+    console.log(`Captured from this shell: ${['TETHER_DB', 'HOST', 'PORT'].filter((k) => env[k]).map((k) => `${k}=${env[k]}`).join(' ')}`);
+  }
+  console.log('Enable with:');
+  console.log(`  launchctl bootstrap gui/$(id -u) ${plistPath}`);
+  console.log('Disable with:');
+  console.log(`  launchctl bootout gui/$(id -u)/${label}`);
+}
+
 // ---------------------------------------------------------------- connect / disconnect
 // One command to make this machine fully managed by Tether, and one to undo it cleanly:
 // pair -> install hooks for every AI agent present -> register their transcript roots ->
@@ -1174,6 +1231,7 @@ else if (cmd === 'run') cmdRun();
 else if (cmd === 'hooks') cmdHooks();
 else if (cmd === 'launchd') cmdLaunchd();
 else if (cmd === 'relay') cmdRelay();
+else if (cmd === 'relay-service') cmdRelayService();
 else if (cmd === 'connect') cmdConnect();
 else if (cmd === 'disconnect') cmdDisconnect();
 else if (cmd === 'status') cmdStatus();
@@ -1184,6 +1242,7 @@ else {
   console.log('       tetherd connect <pairing-code>   # pair + install agent hooks + start sync');
   console.log('       tetherd disconnect [--forget]    # remove hooks, stop and remove sync');
   console.log('       tetherd relay                    # self-host the relay + web UI');
+  console.log('       tetherd relay-service install    # keep the relay running (macOS launchd)');
   console.log('       tetherd hooks print | install --settings <path>');
   console.log('       tetherd launchd install');
   console.log('       tetherd status');
