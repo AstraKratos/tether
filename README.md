@@ -38,9 +38,10 @@ node daemon/tetherd.mjs pair 'TETHER1.…' --relay http://127.0.0.1:8787 --name 
 node daemon/tetherd.mjs run      # or: node daemon/tetherd.mjs launchd install
 ```
 
-The relay also serves a landing page at `/welcome` — what Tether is, how it works, how to
-connect, with a sign-in link into the app — for anyone you point at your relay who hasn't
-installed it yet. The app itself is at `/`.
+The relay serves the landing page at `/` — what Tether is, how it works, how to connect, with
+a sign-in link into the app — so anyone you point at your relay lands on something that
+explains itself. **The app is at `/app`** (`/welcome` is an alias for the landing page). A
+relay running without `site/` serves the app at `/` as before.
 
 ### Reaching it from a phone / tablet
 

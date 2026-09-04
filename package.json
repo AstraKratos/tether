@@ -1,6 +1,6 @@
 {
   "name": "@astrakratos/tetherd",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "description": "Mirror your local AI coding sessions (Claude Code, Cursor, Codex) to a web UI — watch them, answer their prompts, and steer them from anywhere. End-to-end encrypted.",
   "keywords": [

@@ -317,6 +317,7 @@
     <a class="lnk" href="#install">Install</a>
     <a class="lnk sec" href="#security">Security</a>
     <a class="lnk gh" href="https://github.com/AstraKratos/tether" target="_blank" rel="noopener">GitHub</a>
+    <a class="lnk applink" href="http://127.0.0.1:8787" target="_blank" rel="noopener">Sign in</a>
     <a class="btn primary" href="#install">Get started</a>
   </div>
 </header>
@@ -587,14 +588,19 @@ e2Ru5Io0Pa7Sd9Fg1Hj3Kl6Zx8Cv0Bn2Mq5Wt9Ye3Ru6
 </footer>
 
 <script>
-  // When the relay itself serves this page (at /welcome), the app is on this same host at /.
-  // Point every sign-in link there and drop the placeholder address. Anywhere else — GitHub
-  // Pages, a copy on disk — the links keep the documented default.
+  // If a Tether relay is serving this page, the app is on this same host at /app. Ask it —
+  // /api/health answers only on a relay — and point every sign-in link there. Served from
+  // anywhere else (GitHub Pages, a copy on disk) the links keep the documented default.
   (function () {
-    if (location.pathname.replace(/\/$/, '') !== '/welcome') return;
-    document.querySelectorAll('a.applink').forEach(function (a) { a.href = '/'; a.removeAttribute('target'); });
-    var n = document.querySelector('.appnote');
-    if (n) n.textContent = 'This relay is serving the page, so Sign in opens the app right here.';
+    fetch('/api/health', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.ok) return;
+        document.querySelectorAll('a.applink').forEach(function (a) { a.href = '/app'; a.removeAttribute('target'); });
+        var n = document.querySelector('.appnote');
+        if (n) n.textContent = 'This relay is serving the page, so Sign in opens the app right here.';
+      })
+      .catch(function () {});
   })();
   // Copy the install command.
   (function () {
