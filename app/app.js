@@ -757,6 +757,10 @@ function redrawAgentOpts() {
 function select(k) {
   S.current = k;
   S.follow = true; // opening a chat always lands on the latest activity
+  showSessionPane();
+  // Push a history entry so the phone's own back gesture returns to the list rather than
+  // leaving the app — the thing people actually reach for before finding a button.
+  if (!history.state?.pane) history.pushState({ pane: true }, '');
   renderFleet(); renderPaneHeader();
   $('composer').hidden = false;
   if (!S.agentOpts.has(k)) S.agentOpts.set(k, {});
@@ -777,7 +781,7 @@ function subscribe(k) {
 function renderPaneHeader() {
   const s = S.sessions.get(S.current);
   if (!s) return;
-  $('paneHeader').innerHTML = `${agentChip(s.agent, true)}<span class="title">${esc(sessName(s))}</span>
+  $('paneHeader').innerHTML = `<button class="backBtn" id="backBtn" title="Back to sessions" aria-label="Back to sessions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>${agentChip(s.agent, true)}<span class="title">${esc(sessName(s))}</span>
     <span class="pill ${esc(s.state)}">${esc(STATE_LABEL[s.state] ?? s.state)}</span>
     <span class="path mono">${esc(s.meta?.cwd ?? '')}${s.meta?.gitBranch ? ' · ' + esc(s.meta.gitBranch) : ''}</span>
     ${s.meta?.model ? `<span class="mbadge" title="model serving this session">${esc(modelName(s.meta.model))}</span>` : ''}
@@ -787,6 +791,17 @@ function renderPaneHeader() {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h5l2 2.5h8A1.5 1.5 0 0 1 21 8v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/></svg>
     </button>`;
   $('inspToggle').addEventListener('click', () => toggleInspector());
+  // On a phone the pane IS the screen, so leaving it means going back to the list. The
+  // button is display:none above 760px, where both are visible at once and back is meaningless.
+  $('backBtn')?.addEventListener('click', () => showSessionList());
+}
+
+// Phone navigation. Desktop ignores both of these — the class only does anything inside the
+// 760px media query, so the same code drives one layout or two without branching on width.
+function showSessionPane() { document.body.classList.add('on-pane'); }
+function showSessionList() {
+  document.body.classList.remove('on-pane');
+  history.state?.pane && history.back(); // keep the back button and the gesture in step
 }
 
 // --- minimal, safe markdown -> HTML (escapes first, then formats) ---
@@ -1893,6 +1908,9 @@ window.addEventListener('unhandledrejection', (e) => {
   const el = $('setupErr');
   if (el && !$('setup').hidden) el.textContent = `Error: ${e.reason?.message ?? e.reason}`;
 });
+
+// Back gesture / browser back: return to the list instead of unloading the app.
+addEventListener('popstate', () => document.body.classList.remove('on-pane'));
 
 if (cfg?.accountId) boot();
 else $('setup').hidden = false;

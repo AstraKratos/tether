@@ -103,10 +103,13 @@ textarea{resize:vertical}
 .setup-hint b{color:var(--muted)}
 .setup-foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
 @media (max-width:880px){
-  #setup{grid-template-columns:1fr;min-height:100vh;align-content:start;padding-top:8vh}
+  /* Horizontal padding lives on the container, and the card is capped to what's left.
+     width:100% plus a horizontal margin overflows — margins sit outside the box that
+     border-box measures — which cut the tabs and inputs off the right edge of a phone. */
+  #setup{grid-template-columns:1fr;min-height:100vh;align-content:start;padding:7vh 16px 28px}
   .setup-side{display:none}
   .setup-brand-m{display:flex}
-  .setup-card{margin:0 auto}
+  .setup-card{margin:0 auto;max-width:min(420px,100%)}
 }
 #createBtn{margin-top:18px}
 #loginBtn{margin-top:12px}
@@ -307,6 +310,11 @@ textarea{resize:vertical}
 
 /* ---------------- pane ---------------- */
 #pane{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--panel)}
+/* only ever shown on phones, where the pane is a screen of its own rather than a column */
+.backBtn{display:none;align-items:center;justify-content:center;width:34px;height:34px;flex:0 0 34px;
+  margin-left:-6px;border:none;background:none;color:var(--muted);cursor:pointer;border-radius:9px}
+.backBtn:hover{color:var(--text);background:var(--panel2)}
+.backBtn svg{width:20px;height:20px}
 #paneHeader{display:flex;align-items:center;gap:11px;padding:0 22px;height:52px;flex:0 0 52px;
   border-bottom:1px solid var(--line)}
 #paneHeader .title{font-weight:700;font-size:15px;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -482,12 +490,46 @@ pre.wrap{background:var(--code);border:1px solid var(--line2);border-radius:10px
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 
 @media (max-width:900px){ #inspector{display:none} }
+
+/* ---------------- phones ----------------
+   A phone can't run a three-pane layout, and stacking them just gives you two cramped
+   halves. So the list and a session become two SCREENS: the list fills the phone, opening
+   a session replaces it, and a back button in the header returns. body.on-pane is the
+   switch — set when a session is opened, cleared by the back button. */
 @media (max-width:760px){
-  .cols{flex-direction:column}
-  #fleetWrap{width:100%;flex:0 0 auto;max-height:40vh;border-right:none;border-bottom:1px solid var(--line)}
+  #fleetWrap{width:100%;flex:1 1 auto;max-height:none;border-right:none}
   #fleetResize{display:none}
+  #pane{display:none}
+  body.on-pane #fleetWrap{display:none}
+  body.on-pane #pane{display:flex}
+  .backBtn{display:inline-flex}
+
+  /* the topbar has to survive ~360px: keep the brand, the state and the two primary actions */
   .topbar{gap:8px;padding:0 12px}
-  #newBtn span,#pairBtn{display:none}
+  #newBtn span,#pairBtn,#linkBtn,.brand span{display:none}
+  .live{padding:5px 8px}
+
+  #paneHeader{padding:0 10px;gap:8px;height:50px;flex:0 0 50px}
+  #paneHeader .path,#paneHeader .mbadge{display:none}
+  #paneHeader .title{font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #transcript{padding:14px 14px 6px;font-size:14px}
+  #approvals{padding:0 12px}
+  #composer{padding:10px 12px calc(12px + env(safe-area-inset-bottom,0px))}
+  .aoptrow{gap:8px}
+
+  /* touch targets: 44px is the smallest a finger hits reliably */
+  .sess{padding:13px 10px}
+  .device-h{padding:9px 8px}
+  .cbtn{width:42px;height:42px;flex:0 0 42px}
+  .approval .row .allow,.approval .row .deny,.askopts button{padding:14px 10px;font-size:13px}
+  .seg button{padding:13px 0}
+  dialog{width:calc(100% - 24px);padding:20px 18px;max-height:88dvh;overflow-y:auto}
+}
+/* the address bar shows and hides as you scroll; dvh follows it, vh does not, so a composer
+   sized in vh ends up under the browser chrome exactly when you reach for it */
+@supports (height:100dvh){
+  html,body{height:100dvh}
+  #setup{min-height:100dvh}
 }
 
 /* agent differentiation */
