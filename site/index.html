@@ -1,4 +1,7 @@
 <title>Tether</title>
+<!-- Without this a phone lays the page out at 980px and zooms out, so every mobile rule
+     below is simply never consulted. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <style>
@@ -105,7 +108,6 @@
   @media (prefers-reduced-motion:no-preference){
     .t-prompt{animation:tPrompt 10s infinite}
     .t-after{animation:tAfter 10s infinite}
-    .card{animation:cardIn 10s infinite}
     .card .b.ap{animation:apTap 10s infinite}
     .card .row{animation:rowOut 10s infinite}
     .card .stamp{display:flex;animation:stampIn 10s infinite}
@@ -118,7 +120,9 @@
   }
   @keyframes tPrompt{0%,4%{opacity:0}8%,58%{opacity:1}62%,100%{opacity:0}}
   @keyframes tAfter{0%,60%{opacity:0}64%,94%{opacity:1}98%,100%{opacity:0}}
-  @keyframes cardIn{0%,12%{opacity:0;transform:translateY(14px)}17%,92%{opacity:1;transform:none}96%,100%{opacity:0;transform:translateY(14px)}}
+  /* The card does NOT animate its own existence. It is the point of the hero, so it must be
+     on screen in the resting frame — what a screenshot, a link preview and a reduced-motion
+     visitor all get. Only its state changes below: buttons give way to the approved stamp. */
   @keyframes tap{0%,46%{opacity:0;transform:scale(1.5)}50%{opacity:.9;transform:scale(1)}56%{opacity:0;transform:scale(.7)}100%{opacity:0}}
   @keyframes apTap{0%,50%{filter:brightness(1)}53%{filter:brightness(1.35)}58%,100%{filter:brightness(1)}}
   @keyframes rowOut{0%,58%{opacity:1;max-height:60px}62%,100%{opacity:0;max-height:0;margin:0}}
@@ -292,10 +296,16 @@
     .step{grid-template-columns:40px minmax(0,1fr)}
     .step .code,.step .pairpic{grid-column:2}
   }
+  @media (max-width:760px){
+    /* Six nav items don't fit a phone: the section links wrap and push the CTA off the edge.
+       Keep only what someone can act on — Sign in, and Get started. The sections are still
+       reachable by scrolling, which is what people do on a page this length anyway. */
+    .nav a.lnk:not(.applink),.nav .ver{display:none}
+    .nav .wrap{gap:10px}
+  }
   @media (max-width:560px){
     .wrap{width:calc(100% - 32px)}
     .hero{padding-top:44px}
-    .nav a.lnk.gh,.nav a.lnk.sec{display:none}
     .flow{grid-template-columns:1fr}
     .term pre{min-height:0}
   }
@@ -316,7 +326,7 @@
 <header class="nav">
   <div class="wrap">
     <a class="brand" href="#top" aria-label="Tether"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg>Tether</a>
-    <span class="ver">v0.2.3</span>
+    <span class="ver">v0.2.7</span>
     <span class="sp"></span>
     <a class="lnk" href="#how">How it works</a>
     <a class="lnk" href="#install">Install</a>
@@ -585,7 +595,7 @@ e2Ru5Io0Pa7Sd9Fg1Hj3Kl6Zx8Cv0Bn2Mq5Wt9Ye3Ru6
 <footer>
   <div class="wrap">
     <a class="brand" href="#top"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg>Tether</a>
-    <span class="meta"><span>MIT</span><span>Node ≥ 22.5</span><span>v0.2.3</span></span>
+    <span class="meta"><span>MIT</span><span>Node ≥ 22.5</span><span>v0.2.7</span></span>
     <span class="sp"></span>
     <a href="https://github.com/AstraKratos/tether" target="_blank" rel="noopener">github.com/AstraKratos/tether</a>
     <a href="https://www.npmjs.com/package/@astrakratos/tetherd" target="_blank" rel="noopener">npm · @astrakratos/tetherd</a>
