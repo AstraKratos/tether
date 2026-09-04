@@ -1,0 +1,601 @@
+<title>Tether</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+  /* Tether's own system, carried over from the app: a terminal-dark world, one signal colour.
+     Single theme by choice — the subject lives in a terminal — so every colour is painted. */
+  :root{
+    --ink:#090C10; --slate:#0E1319; --slate2:#131A22; --raise:#172029;
+    --line:#1C2630; --line2:#2A3742;
+    --bone:#E7EDF2; --ash:#8493A0; --dim:#586773;
+    --signal:#FF5A34; --signal-2:#FF7A54; --signal-soft:rgba(255,90,52,.12); --signal-line:rgba(255,90,52,.34);
+    --clear:#3DD68C; --clear-soft:rgba(61,214,140,.12);
+    --warn:#FFB13C; --warn-soft:rgba(255,177,60,.13); --warn-line:rgba(255,177,60,.4);
+    --sans:"Hanken Grotesk",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --r:10px; --measure:62ch;
+  }
+  *{box-sizing:border-box}
+  html{color-scheme:dark;scroll-behavior:smooth}
+  body{margin:0;background:var(--ink);color:var(--bone);font:400 16px/1.6 var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  a{color:inherit;text-decoration:none}
+  h1,h2,h3{margin:0;text-wrap:balance;letter-spacing:-.02em}
+  p{margin:0}
+  code,pre,kbd{font-family:var(--mono)}
+  :focus-visible{outline:2px solid var(--signal);outline-offset:3px;border-radius:4px}
+  .wrap{width:min(1120px,calc(100% - 48px));margin:0 auto}
+  .eyebrow{font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ash)}
+  .eyebrow b{color:var(--signal);font-weight:500}
+  .measure{max-width:var(--measure)}
+  .muted{color:var(--ash)}
+  .grid-tex{background-image:radial-gradient(circle at 1px 1px,rgba(231,237,242,.055) 1px,transparent 1.6px);background-size:22px 22px}
+
+  /* ---- nav ---- */
+  .nav{position:sticky;top:0;z-index:5;background:rgba(9,12,16,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav .wrap{display:flex;align-items:center;gap:18px;height:60px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:-.01em}
+  .mk{width:26px;height:26px;color:var(--bone)}
+  .ver{font:500 11px/1 var(--mono);color:var(--ash);border:1px solid var(--line2);border-radius:999px;padding:5px 9px;letter-spacing:.02em}
+  .nav .sp{flex:1}
+  .nav a.lnk{font-size:14px;font-weight:500;color:var(--ash);padding:8px 10px;border-radius:8px}
+  .nav a.lnk:hover{color:var(--bone);background:var(--slate2)}
+  .btn{display:inline-flex;align-items:center;gap:8px;font:600 14px/1 var(--sans);padding:11px 16px;border-radius:var(--r);border:1px solid var(--line2);background:var(--slate2);color:var(--bone);cursor:pointer;transition:background .12s,border-color .12s,transform .06s}
+  .btn:hover{background:var(--raise)}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--signal);border-color:var(--signal);color:#150703;box-shadow:0 1px 0 rgba(255,255,255,.14) inset,0 8px 24px rgba(255,90,52,.22)}
+  .btn.primary:hover{background:var(--signal-2);border-color:var(--signal-2)}
+
+  /* ---- hero ---- */
+  .hero{position:relative;padding:76px 0 48px;overflow:hidden}
+  .hero::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(720px 360px at 70% 42%,rgba(255,90,52,.16),transparent 70%),
+               radial-gradient(circle at 1px 1px,rgba(231,237,242,.06) 1px,transparent 1.6px) 0 0/22px 22px;
+    -webkit-mask-image:linear-gradient(180deg,#000 0,#000 55%,transparent 100%);mask-image:linear-gradient(180deg,#000 0,#000 55%,transparent 100%)}
+  .hero .wrap{position:relative;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:56px;align-items:start}
+  .hero h1{font-size:clamp(38px,5.2vw,62px);line-height:1.02;font-weight:800;letter-spacing:-.035em;margin:18px 0 20px}
+  .hero h1 em{font-style:normal;color:var(--ash);font-weight:600}
+  .hero .lede{font-size:18px;line-height:1.55;color:var(--ash);max-width:46ch}
+  .cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:30px}
+  .install{display:inline-flex;align-items:center;gap:12px;background:var(--slate);border:1px solid var(--line2);border-radius:var(--r);padding:10px 12px 10px 14px;font:500 13.5px/1 var(--mono);color:var(--bone)}
+  .install .pr{color:var(--dim);user-select:none}
+  .install button{font:600 12px/1 var(--sans);color:var(--ash);background:none;border:1px solid var(--line2);border-radius:7px;padding:7px 9px;cursor:pointer}
+  .install button:hover{color:var(--bone);border-color:var(--ash)}
+  .install button.done{color:var(--clear);border-color:var(--clear)}
+  .agents{margin-top:34px;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline}
+  .agents span{font-size:14px;color:var(--bone);font-weight:500}
+
+  /* the demonstration: one prompt, two places, one thread between them */
+  .demo{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:26px;align-items:end}
+  .thread{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:1}
+  .thread path{fill:none;stroke-width:1.4;vector-effect:non-scaling-stroke;stroke-linecap:round}
+  .thread .base{stroke:var(--line2);stroke-dasharray:2 3}
+  .thread .out,.thread .back{stroke-dasharray:9 100;opacity:0}
+  .thread .out{stroke:var(--signal);stroke-width:2.2;filter:drop-shadow(0 0 6px rgba(255,90,52,.9))}
+  .thread .back{stroke:var(--clear);stroke-width:2.2;filter:drop-shadow(0 0 6px rgba(61,214,140,.9))}
+  .term{position:relative;z-index:2;background:var(--slate);border:1px solid var(--line2);border-radius:14px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  .term .bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);font:500 11px/1 var(--mono);color:var(--dim)}
+  .term .bar i{width:10px;height:10px;border-radius:50%;background:var(--line2);display:inline-block}
+  .term .bar i:first-child{background:#FF5F57}.term .bar i:nth-child(2){background:#FEBC2E}.term .bar i:nth-child(3){background:#28C840}
+  .term .bar span{margin-left:6px}
+  .term pre{margin:0;padding:16px 18px 18px;font:400 12.5px/1.65 var(--mono);color:#D3DEE6;white-space:pre;overflow-x:auto;min-height:268px}
+  .term .u{color:var(--ash)} .term .k{color:var(--bone);font-weight:500} .term .q{color:var(--warn)} .term .ok{color:var(--clear)} .term .dm{color:var(--dim)}
+  .term .sel{background:rgba(255,255,255,.06);border-radius:4px;padding:1px 6px;margin-left:-6px}
+  .phone{position:relative;z-index:2;background:var(--slate);border:1px solid var(--line2);border-radius:26px;padding:14px 12px 16px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  .phone::before{content:"";display:block;width:64px;height:5px;border-radius:3px;background:var(--line2);margin:0 auto 14px}
+  .phone .app{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;margin-bottom:12px}
+  .phone .app .mk{width:18px;height:18px}
+  .phone .app .dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--clear);box-shadow:0 0 0 3px var(--clear-soft)}
+  .card{background:var(--slate2);border:1px solid var(--warn);border-radius:14px;padding:12px;box-shadow:0 0 0 4px var(--warn-soft)}
+  .card .h{display:flex;align-items:center;gap:6px;font:700 10px/1 var(--mono);letter-spacing:.06em;color:var(--warn);margin-bottom:8px}
+  .card .h .t{color:var(--dim);font-weight:500;margin-left:auto;letter-spacing:0;font-variant-numeric:tabular-nums}
+  .card .where{font:500 10px/1.4 var(--mono);color:var(--dim);margin-bottom:8px}
+  .card pre{margin:0 0 12px;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:500 10.5px/1.5 var(--mono);color:var(--bone);white-space:pre-wrap;word-break:break-word}
+  .card .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .card .b{font:700 12px/1 var(--sans);text-align:center;padding:11px 0;border-radius:9px;border:1px solid var(--line2);color:var(--ash)}
+  .card .b.ap{background:var(--signal);border-color:var(--signal);color:#150703}
+  .card .stamp{display:none;align-items:center;gap:6px;font:600 11px/1 var(--sans);color:var(--clear);margin-top:10px}
+  .card .stamp::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--clear)}
+  .tap{position:absolute;width:26px;height:26px;border-radius:50%;border:2px solid var(--bone);left:calc(25% - 13px);bottom:48px;opacity:0;pointer-events:none;z-index:3}
+  .caption{grid-column:1/-1;display:flex;gap:10px;align-items:baseline;font-size:13px;color:var(--ash);margin-top:4px}
+
+  /* One orchestrated 10s loop. At rest (reduced motion, or before styles) the terminal shows the
+     prompt and the phone shows the live card — the still frame that explains the product. */
+  .t-prompt,.t-after{display:block}
+  .t-after{opacity:0}
+  @media (prefers-reduced-motion:no-preference){
+    .t-prompt{animation:tPrompt 10s infinite}
+    .t-after{animation:tAfter 10s infinite}
+    .card{animation:cardIn 10s infinite}
+    .card .b.ap{animation:apTap 10s infinite}
+    .card .row{animation:rowOut 10s infinite}
+    .card .stamp{display:flex;animation:stampIn 10s infinite}
+    .tap{animation:tap 10s infinite}
+    .caption .st{animation:capt 10s infinite}
+    .thread .out{animation:thOut 10s infinite}
+    .thread .back{animation:thBack 10s infinite}
+    .pkt{animation:pkt 6s linear infinite}
+    .live{animation:live 1.6s ease-in-out infinite}
+  }
+  @keyframes tPrompt{0%,4%{opacity:0}8%,58%{opacity:1}62%,100%{opacity:0}}
+  @keyframes tAfter{0%,60%{opacity:0}64%,94%{opacity:1}98%,100%{opacity:0}}
+  @keyframes cardIn{0%,12%{opacity:0;transform:translateY(14px)}17%,92%{opacity:1;transform:none}96%,100%{opacity:0;transform:translateY(14px)}}
+  @keyframes tap{0%,46%{opacity:0;transform:scale(1.5)}50%{opacity:.9;transform:scale(1)}56%{opacity:0;transform:scale(.7)}100%{opacity:0}}
+  @keyframes apTap{0%,50%{filter:brightness(1)}53%{filter:brightness(1.35)}58%,100%{filter:brightness(1)}}
+  @keyframes rowOut{0%,58%{opacity:1;max-height:60px}62%,100%{opacity:0;max-height:0;margin:0}}
+  @keyframes stampIn{0%,60%{opacity:0;max-height:0;margin-top:0}64%,100%{opacity:1;max-height:20px;margin-top:10px}}
+  @keyframes capt{0%,58%{color:var(--ash)}62%,100%{color:var(--clear)}}
+  /* pathLength="100" normalises the dash units: 8 → -100 walks a 9-unit dash from start to end */
+  @keyframes thOut{0%,8%{stroke-dashoffset:9;opacity:0}9%{opacity:1}16%{stroke-dashoffset:-100;opacity:1}17%,100%{opacity:0}}
+  @keyframes thBack{0%,52%{stroke-dashoffset:-100;opacity:0}53%{opacity:1}60%{stroke-dashoffset:9;opacity:1}61%,100%{opacity:0}}
+  @keyframes live{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* ---- proof strip ---- */
+  .proof{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--slate)}
+  .proof .wrap{display:flex;flex-wrap:wrap;gap:10px 34px;align-items:center;min-height:56px;padding:12px 0;font:500 12.5px/1 var(--mono);color:var(--ash)}
+  .proof b{color:var(--bone);font-weight:600}
+  .proof i{width:6px;height:6px;border-radius:50%;background:var(--signal);display:inline-block;margin-right:10px;vertical-align:1px}
+
+  /* ---- sections ---- */
+  section{padding:76px 0;border-top:1px solid var(--line)}
+  .sec-h{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:40px;align-items:start;margin-bottom:44px}
+  .sec-h h2{font-size:clamp(26px,3vw,36px);font-weight:800;line-height:1.1;margin-top:12px}
+  .sec-h p{color:var(--ash);font-size:16.5px;line-height:1.6;align-self:end}
+
+  /* what it does: three vignettes — small working pictures of the UI */
+  .vigs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}
+  .vig h3{font-size:18px;font-weight:700;margin:18px 0 8px}
+  .vig p{color:var(--ash);font-size:14.5px;line-height:1.6}
+  .ui{background:var(--slate);border:1px solid var(--line2);border-radius:14px;padding:14px;min-height:196px;position:relative;overflow:hidden}
+  .ui::after{content:"";position:absolute;inset:auto 0 0 0;height:46px;background:linear-gradient(180deg,transparent,var(--slate))}
+  .ui .hd{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .srow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;font-size:12.5px}
+  .srow + .srow{margin-top:4px}
+  .srow.cur{background:var(--slate2);border:1px solid var(--line2)}
+  .srow .ag{width:18px;height:18px;border-radius:5px;background:var(--signal-soft);border:1px solid var(--signal-line);display:grid;place-items:center;color:var(--signal);font:700 9px/1 var(--mono)}
+  .srow .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+  .srow .pl{font:600 9.5px/1 var(--mono);padding:4px 7px;border-radius:999px;letter-spacing:.02em}
+  .pl.run{color:var(--clear);background:var(--clear-soft)} .pl.need{color:var(--warn);background:var(--warn-soft)} .pl.idle{color:var(--dim);background:rgba(255,255,255,.04)}
+  .pl.run::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--clear);margin-right:6px;vertical-align:0}
+  .ui .live{display:inline-block}
+  .banner{background:var(--raise);border:1px solid var(--line2);border-radius:14px;padding:11px 12px;display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;box-shadow:0 14px 40px rgba(0,0,0,.4)}
+  .banner .ic{width:34px;height:34px;border-radius:9px;background:var(--ink);display:grid;place-items:center}
+  .banner .ic .mk{width:20px;height:20px}
+  .banner b{display:block;font-size:12.5px;font-weight:700}
+  .banner span{display:block;font-size:11.5px;color:var(--ash);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .banner small{font:500 10px/1 var(--mono);color:var(--dim)}
+  .banner + .banner{margin-top:8px;opacity:.55;transform:scale(.97)}
+  .qcard{background:var(--slate2);border:1px solid var(--line2);border-radius:12px;padding:12px}
+  .qcard .q{font-size:12.5px;font-weight:700;margin-bottom:9px}
+  .opt{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--line2);border-radius:9px;font-size:12px;margin-bottom:6px}
+  .opt small{color:var(--dim);font-size:11px}
+  .opt.sel{border-color:var(--signal);background:var(--signal-soft)}
+  .qcard .send{margin-top:4px;text-align:center;font:700 11.5px/1 var(--sans);padding:9px;border-radius:8px;background:var(--signal);color:#150703}
+
+  /* how it works: nodes on a live rail */
+  .flowwrap{position:relative;padding-top:34px}
+  .rail{position:absolute;left:5%;right:5%;top:0;height:34px}
+  .rail::before{content:"";position:absolute;left:0;right:0;top:14px;height:1px;background:repeating-linear-gradient(90deg,var(--line2) 0 6px,transparent 6px 11px)}
+  .pkt{position:absolute;top:10px;width:9px;height:9px;border-radius:50%;background:var(--signal);box-shadow:0 0 10px rgba(255,90,52,.8);left:0;opacity:0}
+  .pkt.b{animation-delay:2s!important;background:var(--bone);box-shadow:0 0 10px rgba(231,237,242,.6)}
+  .pkt.c{animation-delay:4s!important}
+  @keyframes pkt{0%{left:0;opacity:0}4%{opacity:1}46%{opacity:1}50%{left:100%;opacity:0}100%{left:100%;opacity:0}}
+  .wire{position:absolute;left:5%;right:5%;top:26px;display:grid;grid-template-columns:repeat(3,1fr);font:500 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);text-align:center}
+  .wire span:nth-child(2){color:var(--ash)}
+  .flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:stretch}
+  .node{background:var(--slate);border:1px solid var(--line2);border-radius:12px;padding:18px 18px 16px;position:relative}
+  .node .eyebrow{margin-bottom:10px}
+  .node .pic{height:64px;border-radius:9px;background:var(--ink);border:1px solid var(--line);margin-bottom:14px;display:grid;place-items:center;overflow:hidden}
+  .node h3{font-size:16px;font-weight:700;margin-bottom:6px}
+  .node p{font-size:13.5px;color:var(--ash);line-height:1.55}
+  .node .sees{margin-top:12px;font:500 11px/1.5 var(--mono);color:var(--dim)}
+  .node .sees b{color:var(--ash);font-weight:500}
+  .node.relay{background:linear-gradient(180deg,var(--slate),var(--ink))}
+  .node.you{border-color:var(--signal-line)}
+  .pic .ln{font:500 10.5px/1.5 var(--mono);color:var(--ash);white-space:pre;text-align:left}
+  .pic .ln b{color:var(--bone);font-weight:500}
+  .pic .ct{font:500 10.5px/1.5 var(--mono);color:var(--dim);white-space:pre;letter-spacing:.02em}
+  .pic svg{width:30px;height:30px;color:var(--ash)}
+
+  /* the one rule */
+  .mech{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:40px;align-items:start}
+  .rule{font-size:clamp(22px,2.6vw,30px);font-weight:800;line-height:1.15;letter-spacing:-.025em;max-width:22ch}
+  .rule em{font-style:normal;color:var(--signal)}
+  .mech .list{display:flex;flex-direction:column;border-top:1px solid var(--line2)}
+  .mech .list > div{padding:18px 0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:150px minmax(0,1fr);gap:18px;align-items:baseline}
+  .mech .list .eyebrow{color:var(--bone);letter-spacing:.06em;text-transform:none;font-size:12.5px}
+  .mech .list p{font-size:14.5px;color:var(--ash);line-height:1.6}
+  .mech .list code{font-size:12px;color:var(--bone)}
+  .note{margin-top:22px;padding:16px 18px;border:1px solid var(--warn-line);border-radius:12px;background:var(--warn-soft);font-size:14px;line-height:1.6;color:var(--bone)}
+  .note b{color:var(--warn)}
+
+  /* install: a real sequence, so it is numbered */
+  .steps{display:flex;flex-direction:column;border-top:1px solid var(--line2)}
+  .step{display:grid;grid-template-columns:56px minmax(0,4fr) minmax(0,7fr);gap:24px;padding:26px 0;border-bottom:1px solid var(--line);align-items:start}
+  .step .n{font:700 28px/1 var(--mono);color:var(--dim);letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+  .step h3{font-size:17px;font-weight:700;margin-bottom:6px}
+  .step p{font-size:14.5px;color:var(--ash);line-height:1.6}
+  /* after the three steps: the handoff into the app */
+  .next{margin-top:30px;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:28px;align-items:center;padding:26px 28px;border:1px solid var(--signal-line);border-radius:16px;background:linear-gradient(135deg,var(--signal-soft),transparent 60%),var(--slate)}
+  .next h3{font-size:20px;font-weight:800;margin:10px 0 6px}
+  .next p{font-size:14.5px;color:var(--ash);line-height:1.6}
+  .next-cta{display:flex;flex-direction:column;gap:10px;align-items:flex-start;justify-self:end}
+  .next-cta .btn{font-size:15px;padding:14px 20px}
+  .next-cta small{font-size:12px;color:var(--dim);line-height:1.5}
+  .next-cta code{font-size:11.5px;color:var(--ash)}
+  @media (max-width:980px){.next{grid-template-columns:1fr}.next-cta{justify-self:start}}
+  .code{background:var(--slate);border:1px solid var(--line2);border-radius:var(--r);overflow-x:auto}
+  .code pre{margin:0;padding:14px 16px;font:400 12.5px/1.7 var(--mono);color:#D3DEE6;white-space:pre}
+  .code .c{color:var(--dim)} .code .h{color:var(--bone)} .code .a{color:var(--signal-2)}
+  .pairpic{display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--slate);border:1px solid var(--line2);border-radius:var(--r);font:500 11.5px/1.4 var(--mono);color:var(--ash)}
+  .pairpic .dev{display:grid;place-items:center;gap:6px;text-align:center;color:var(--bone)}
+  .pairpic .dev svg{width:34px;height:34px;color:var(--ash)}
+  .pairpic .arrow{flex:1;height:1px;background:repeating-linear-gradient(90deg,var(--line2) 0 6px,transparent 6px 11px);position:relative}
+  .pairpic .arrow::after{content:"TETHER1.…";position:absolute;left:50%;top:-9px;transform:translateX(-50%);background:var(--slate);padding:0 8px;color:var(--signal-2);font-weight:600}
+
+  /* security: the sealed envelope */
+  .env{background:var(--slate);border:1px solid var(--line2);border-radius:16px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.4)}
+  .env .meta{display:flex;flex-wrap:wrap;gap:8px 22px;padding:14px 18px;border-bottom:1px solid var(--line2);background:var(--slate2);font:500 11.5px/1 var(--mono);color:var(--ash)}
+  .env .meta b{color:var(--bone);font-weight:500}
+  .env .meta .tag{margin-left:auto;color:var(--clear);letter-spacing:.06em;text-transform:uppercase;font-size:10px}
+  .env .body{position:relative;padding:18px 18px 22px}
+  .env .ct{margin:0;font:500 12px/1.75 var(--mono);color:var(--dim);white-space:pre;overflow:hidden;letter-spacing:.03em;-webkit-mask-image:linear-gradient(180deg,#000 55%,transparent);mask-image:linear-gradient(180deg,#000 55%,transparent)}
+  .env .seal{position:absolute;left:18px;right:18px;bottom:18px;display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--ink);border:1px solid var(--line2);border-radius:12px;font-size:13px;color:var(--bone)}
+  .env .seal svg{width:18px;height:18px;color:var(--clear);flex:0 0 18px}
+  .env .seal small{color:var(--ash);font:500 11px/1.4 var(--mono)}
+  .secgrid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:22px;align-items:start}
+  .pane{background:var(--slate);border:1px solid var(--line2);border-radius:14px;padding:20px 22px}
+  .pane + .pane{margin-top:14px}
+  .pane h3{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .pane h3 i{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .pane.yes h3 i{background:var(--clear)} .pane.no h3 i{background:var(--signal)}
+  .pane ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+  .pane li{font-size:13.5px;color:var(--ash);line-height:1.5;padding-left:16px;position:relative}
+  .pane li::before{content:"";position:absolute;left:0;top:.7em;width:6px;height:1px;background:var(--dim)}
+  .crypto{margin-top:22px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line2)}
+  .crypto > div{padding:18px 22px 18px 0;border-right:1px solid var(--line)}
+  .crypto > div + div{padding-left:22px}
+  .crypto > div:last-child{border-right:0}
+  .crypto .eyebrow{margin-bottom:8px}
+  .crypto p{font-size:14px;color:var(--ash);line-height:1.55}
+  .crypto code{font-size:12px;color:var(--bone)}
+
+  /* closing */
+  .close{text-align:left}
+  .close .wrap{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:40px;align-items:center}
+  .close h2{font-size:clamp(28px,3.4vw,42px);font-weight:800;line-height:1.05}
+  .close .cta{margin-top:22px}
+
+  footer{border-top:1px solid var(--line);padding:40px 0 56px}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:14px 28px;align-items:center;font-size:13.5px;color:var(--ash)}
+  footer .brand{font-size:15px}
+  footer .sp{flex:1}
+  footer a:hover{color:var(--bone)}
+  footer .meta{font:500 12px/1 var(--mono);display:flex;gap:16px;flex-wrap:wrap}
+
+  @media (max-width:980px){
+    .hero .wrap,.sec-h,.mech,.secgrid,.close .wrap{grid-template-columns:1fr;gap:28px}
+    .demo{grid-template-columns:1fr;gap:18px}
+    .thread{display:none}
+    .phone{max-width:300px}
+    .vigs{grid-template-columns:1fr}
+    .flow{grid-template-columns:1fr 1fr}
+    .rail,.wire{display:none}
+    .flowwrap{padding-top:0}
+    .crypto{grid-template-columns:1fr}
+    .crypto > div{border-right:0;border-bottom:1px solid var(--line);padding-left:0}
+    .crypto > div:last-child{border-bottom:0}
+    .step{grid-template-columns:40px minmax(0,1fr)}
+    .step .code,.step .pairpic{grid-column:2}
+  }
+  @media (max-width:560px){
+    .wrap{width:calc(100% - 32px)}
+    .hero{padding-top:44px}
+    .nav a.lnk.gh,.nav a.lnk.sec{display:none}
+    .flow{grid-template-columns:1fr}
+    .term pre{min-height:0}
+  }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <g id="bond">
+    <line x1="35" y1="65" x2="65" y2="35" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="33" cy="67" r="13" fill="#FF5A34"/>
+    <circle cx="67" cy="33" r="12" fill="none" stroke="currentColor" stroke-width="8"/>
+  </g>
+  <g id="lock"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></g>
+  <g id="laptop"><rect x="3" y="5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1 19h22" stroke="currentColor" stroke-width="1.6"/></g>
+  <g id="mobile"><rect x="7" y="2" width="10" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="18.5" r=".9" fill="currentColor"/></g>
+  <g id="server"><rect x="3" y="4" width="18" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="13" width="18" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="7" cy="7.5" r="1" fill="currentColor"/><circle cx="7" cy="16.5" r="1" fill="currentColor"/></g>
+</defs></svg>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Tether"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg>Tether</a>
+    <span class="ver">v0.2.3</span>
+    <span class="sp"></span>
+    <a class="lnk" href="#how">How it works</a>
+    <a class="lnk" href="#install">Install</a>
+    <a class="lnk sec" href="#security">Security</a>
+    <a class="lnk gh" href="https://github.com/AstraKratos/tether" target="_blank" rel="noopener">GitHub</a>
+    <a class="btn primary" href="#install">Get started</a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero" style="border-top:0">
+    <div class="wrap">
+      <div>
+        <div class="eyebrow"><b>●</b> For Claude Code · Cursor · Codex</div>
+        <h1>Your agent stopped to ask a question.<br><em>You're not at your desk.</em></h1>
+        <p class="lede">Tether mirrors your local AI coding sessions to a web app you can open on your phone, pings you the moment one needs you, and lets you answer — approve, choose, prompt — from anywhere. The session at your desk carries on as if you'd typed it there.</p>
+        <div class="cta">
+          <div class="install"><span class="pr">$</span><code id="cmd">npm i -g @astrakratos/tetherd</code><button type="button" id="copy" aria-label="Copy install command">Copy</button></div>
+          <a class="btn" href="https://github.com/AstraKratos/tether" target="_blank" rel="noopener">View source</a>
+        </div>
+        <div class="agents">
+          <span class="eyebrow">Works with</span>
+          <span>Claude Code</span><span>Cursor</span><span>Codex</span>
+          <span class="muted" style="font-size:13px">· any agent that writes a transcript</span>
+        </div>
+      </div>
+
+      <div class="demo" aria-label="Demonstration: the same permission prompt shown in a terminal and on a phone, connected by a thread, answered from the phone">
+        <!-- the tether itself: a thread from the prompt line to the phone card; pathLength normalises the pulse -->
+        <svg class="thread" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <path class="base" pathLength="100" d="M 56 44 C 64 44, 60 62, 67 62"/>
+          <path class="out"  pathLength="100" d="M 56 44 C 64 44, 60 62, 67 62"/>
+          <path class="back" pathLength="100" d="M 56 44 C 64 44, 60 62, 67 62"/>
+        </svg>
+        <div class="term">
+          <div class="bar"><i></i><i></i><i></i><span>claude — ~/api</span></div>
+<pre><span class="u">❯</span> <span class="k">Run the migration and verify the row counts</span>
+<span class="dm">⏺</span> Bash  <span class="dm">psql -f migrations/042_add_index.sql</span>
+<span class="t-prompt">
+  <span class="q">This command requires approval</span>
+  Do you want to proceed?
+  <span class="sel">❯ 1. Yes</span>
+    2. Yes, and don't ask again for: psql
+    3. No
+  <span class="dm">Esc to cancel · Tab to amend</span></span><span class="t-after" style="margin-top:-7.5em">
+  <span class="ok">⎿  Approved in Tether by akhil-phone</span>
+  CREATE INDEX
+  <span class="ok">✓</span> orders: 1,284,006 rows · order_items: 5,117,340 rows
+<span class="u">❯</span> <span class="dm">Continue this session…</span></span></pre>
+        </div>
+
+        <div class="phone">
+          <div class="app"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg>Tether <span class="dot" aria-hidden="true"></span></div>
+          <div class="card">
+            <div class="h">▲ BASH — NEEDS YOU <span class="t">9:41</span></div>
+            <div class="where">~/api · main · Akhils-MacBook-Pro</div>
+            <pre>psql -f migrations/042_add_index.sql</pre>
+            <div class="row"><div class="b ap">Approve</div><div class="b">Deny</div></div>
+            <div class="stamp">Approved · the session continued</div>
+          </div>
+          <div class="tap" aria-hidden="true"></div>
+        </div>
+
+        <div class="caption"><span class="eyebrow">One prompt, two places</span><span class="st">Whichever you answer first wins. The other simply goes away.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="proof"><div class="wrap">
+    <span><i></i><b>0</b> dependencies in the daemon</span>
+    <span><i></i><b>1</b> in the relay — <b>ws</b></span>
+    <span><i></i><b>AES-256-GCM</b> per-session keys</span>
+    <span><i></i><b>Ed25519</b> device identity</span>
+    <span><i></i>relay sees <b>ciphertext only</b></span>
+    <span><i></i><b>MIT</b> · Node ≥ 22.5</span>
+  </div></div>
+
+  <section id="what" style="border-top:0">
+    <div class="wrap">
+      <div class="sec-h">
+        <div><div class="eyebrow">What it does</div><h2>Three things, and only three.</h2></div>
+        <p class="measure">A small daemon on your machine plus a web app. It doesn't run your agents, wrap them, or change what they do. It watches the transcripts they already write, and gives you a second place to answer when they stop and ask.</p>
+      </div>
+      <div class="vigs">
+        <div class="vig">
+          <div class="ui grid-tex">
+            <div class="hd">Akhils-MacBook-Pro <span class="live" style="color:var(--clear)">● online</span></div>
+            <div class="srow cur"><span class="ag">C</span><span class="nm">Fix the flaky auth test</span><span class="pl run">running</span></div>
+            <div class="srow"><span class="ag">C</span><span class="nm">Migrate the orders table</span><span class="pl need">needs input</span></div>
+            <div class="srow"><span class="ag" style="color:var(--ash);background:rgba(255,255,255,.04);border-color:var(--line2)">↗</span><span class="nm">Add a rate limiter to /search</span><span class="pl idle">idle</span></div>
+            <div class="srow"><span class="ag">C</span><span class="nm">Rename UserService → Accounts</span><span class="pl idle">idle</span></div>
+          </div>
+          <h3>See every session, live</h3>
+          <p>Every Claude Code and Cursor session on every paired machine, streaming as it happens — messages, tool calls, results, rendered the way the CLI renders them. The transcript files are the log, so nothing is lost when you're offline; the mirror catches up on reconnect.</p>
+        </div>
+        <div class="vig">
+          <div class="ui grid-tex">
+            <div class="hd">Notifications</div>
+            <div class="banner"><div class="ic"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg></div><div><b>Approval needed: Bash</b><span>Migrate the orders table — psql -f migrations/042_add_index.sql</span></div><small>now</small></div>
+            <div class="banner"><div class="ic"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg></div><div><b>Fix the flaky auth test: finished</b><span>Turn finished · 3 files changed</span></div><small>4m</small></div>
+          </div>
+          <h3>Know the moment one needs you</h3>
+          <p>A session finishes, hits a permission prompt, or asks a question — you get a notification and a card that says exactly what it's waiting for: the command, the file, the choices. Sessions that need you sort to the top of the list.</p>
+        </div>
+        <div class="vig">
+          <div class="ui grid-tex">
+            <div class="hd" style="color:var(--warn)">▲ Claude is asking you</div>
+            <div class="qcard">
+              <div class="q">Which format do you want the report in?</div>
+              <div class="opt"><b>JSON</b><small>Standard, easy to parse programmatically.</small></div>
+              <div class="opt sel"><b>YAML</b><small>Human-readable, supports comments.</small></div>
+              <div class="send">Send answer</div>
+            </div>
+          </div>
+          <h3>Decide from your pocket</h3>
+          <p>Approve or deny the tool call, pick an answer to the question, accept the plan — or send a new prompt, switch model, start a fresh session in any folder. The daemon delivers it to the running session as if you'd typed it there.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="sec-h">
+        <div><div class="eyebrow">How it works</div><h2>A daemon, a relay, and a key that never leaves you.</h2></div>
+        <p class="measure">Four parts. The relay in the middle is deliberately blind — it moves ciphertext and knows which device it came from, and nothing else. Your account key lives in your browser and in <code>~/.tether/identity.json</code> on paired machines, and travels only inside pairing codes you copy yourself.</p>
+      </div>
+      <div class="flowwrap">
+        <div class="rail" aria-hidden="true"><span class="pkt"></span><span class="pkt b"></span><span class="pkt c"></span></div>
+        <div class="wire" aria-hidden="true"><span>plaintext → sealed</span><span>ciphertext · routed</span><span>sealed → plaintext</span></div>
+        <div class="flow">
+          <div class="node"><div class="eyebrow">Your machine</div><div class="pic"><div class="ln"><b>⏺ Bash</b> psql -f migrations/…
+<span style="color:var(--warn)">Do you want to proceed?</span></div></div><h3>The agent writes its transcript</h3><p>Claude Code and Cursor already append every turn to a JSONL file. Tether tails those files by byte offset and installs a handful of hooks for timing.</p><div class="sees">hooks: <b>PermissionRequest · Stop · Notification</b></div></div>
+          <div class="node"><div class="eyebrow">tetherd</div><div class="pic"><div class="ct">a9F2kQ…x1Lm0Z
+7bC4nR…pW8vT3</div></div><h3>Encrypts and forwards</h3><p>Normalises each line into render-ready events, encrypts them with a per-session key, and pushes them over a WebSocket. Zero dependencies. Runs as a launchd / systemd service.</p><div class="sees">holds: <b>account key · device key</b></div></div>
+          <div class="node relay"><div class="eyebrow">Relay</div><div class="pic"><svg viewBox="0 0 24 24"><use href="#lock"/></svg></div><h3>Stores ciphertext, routes it</h3><p>Authenticates daemons by Ed25519 signature and browsers by token, stores encrypted events in SQLite, fans them out to your devices. It cannot read a single message.</p><div class="sees">sees: <b>ciphertext · device id · session id · timestamps</b></div></div>
+          <div class="node you"><div class="eyebrow">Your browser</div><div class="pic"><div class="ln"><b>▲ BASH — NEEDS YOU</b>
+psql -f migrations/042_add_index.sql</div></div><h3>Decrypts, renders, answers</h3><p>Derives the session key from your account secret, decrypts in the page, and shows the live transcript. Your decision goes back the same way: sealed, routed, delivered.</p><div class="sees">holds: <b>account key (localStorage)</b></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="doctrine">
+    <div class="wrap">
+      <div class="mech">
+        <div>
+          <div class="eyebrow">The one rule</div>
+          <p class="rule" style="margin-top:12px">Tether never changes what an agent does. <em>It only adds a second place to answer.</em></p>
+          <p class="muted measure" style="margin-top:18px;font-size:15.5px;line-height:1.6">Every agent's own permission logic — auto mode, allow rules, deny rules — runs first and untouched. Tether never invents a prompt the agent wouldn't have raised, and never holds a call the agent would have approved on its own. When the agent genuinely stops for a human, that prompt appears in your terminal <b style="color:var(--bone)">and</b> on your phone at the same time.</p>
+          <div class="note"><b>Honest boundary.</b> The folder-trust dialog, login and OAuth prompts, sandbox network prompts and managed-settings approval happen outside any tool call. No hook fires for them. They're shown in the UI, but must be answered at the machine.</div>
+        </div>
+        <div class="list">
+          <div><span class="eyebrow">Interactive sessions</span><p>A terminal, Cursor, VS Code — anything you started yourself. Tether holds the <code>PermissionRequest</code> hook, which fires only <i>after</i> the CLI has decided a human must answer. The local prompt stays on screen; the card appears on your phone; first answer wins. Every tool is covered, MCP tools included.</p></div>
+          <div><span class="eyebrow">Sessions Tether starts</span><p>A prompt or new session sent from the web UI runs headless, with no terminal to prompt at. It gets <code>--permission-prompt-tool</code> pointing at Tether's own MCP server, which the CLI calls only for decisions it couldn't make itself. Questions come back with their actual choices.</p></div>
+          <div><span class="eyebrow">In a tmux pane</span><p>Where the session has a pane, Tether mirrors the real prompt from the screen and answers it as a keystroke — no hold at all. Start a session as <i>interactive</i> from the UI and this is what you get.</p></div>
+          <div><span class="eyebrow">If anything fails</span><p>Every mechanism degrades to exactly what happens without Tether. Daemon down: sessions run locally and the mirror catches up. Relay down: the daemon retries with backoff. Nobody answers: the local prompt simply remains. Tether can only ever <i>add</i> a way to answer, never lock you out.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <div class="sec-h">
+        <div><div class="eyebrow">Install</div><h2>Up in about five minutes.</h2></div>
+        <p class="measure">One Node package for the daemon and the relay both. Node 22.5 or newer. The daemon has no dependencies; the relay has one, <code>ws</code>. Everything sensitive lives in <code>~/.tether/</code>, mode 0600.</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div><h3>Run a relay</h3><p>Locally to try it, or on a small VM to reach it from your phone. Anything that isn't localhost needs HTTPS — browsers only expose the crypto APIs on secure origins.</p></div>
+          <div class="code"><pre><span class="c"># laptop, to try it</span>
+<span class="h">npm i -g @astrakratos/tetherd</span>
+<span class="h">tetherd relay</span>                        <span class="c"># http://127.0.0.1:8787</span>
+
+<span class="c"># a VM, behind Caddy or nginx with TLS</span>
+<span class="h">TETHER_DB=/var/lib/tether/relay.sqlite HOST=0.0.0.0 PORT=8787 tetherd relay</span></pre></div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div><h3>Create an account, pair a machine</h3><p>Sign up in the browser with an email and password. The account id and encryption key are generated in the page; the relay is handed a hash to verify you and a sealed copy of the key it can never open. Then press <b style="color:var(--bone)">Pair a machine</b> and copy the code — it carries your key, and the relay only ever sees its hash.</p></div>
+          <div class="pairpic"><div class="dev"><svg viewBox="0 0 24 24"><use href="#mobile"/></svg>your browser</div><div class="arrow"></div><div class="dev"><svg viewBox="0 0 24 24"><use href="#laptop"/></svg>the machine</div><div style="flex:0 0 auto;color:var(--dim)">expires<br>in 10 min</div></div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div><h3>Connect the machine</h3><p>One command pairs it, detects every agent installed, installs Tether's hooks alongside your existing ones, and starts the background service. <code>tetherd disconnect</code> reverses all of it and leaves other tools' hooks untouched.</p></div>
+          <div class="code"><pre><span class="h">tetherd connect</span> <span class="a">'TETHER1.…'</span> <span class="h">--relay https://your-relay --name my-mac</span>
+
+<span class="c"># then, from any browser or phone: sign in with the same email</span></pre></div>
+        </div>
+      </div>
+      <div class="next">
+        <div>
+          <div class="eyebrow">Then</div>
+          <h3>Sign in from any browser or phone</h3>
+          <p>Same email, same password. Your key is unlocked in the page; nothing about your sessions is readable in between.</p>
+        </div>
+        <div class="next-cta">
+          <a class="btn primary" href="http://127.0.0.1:8787" target="_blank" rel="noopener">Open Tether — Sign in / Create account</a>
+          <small><code>127.0.0.1:8787</code> is the relay from step 1. Swap in your own relay's address once it's hosted.</small>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="security">
+    <div class="wrap">
+      <div class="sec-h">
+        <div><div class="eyebrow">Security</div><h2>The server is the part you don't have to trust.</h2></div>
+        <p class="measure">Tether is built so that a fully compromised relay learns who talked to whom and when — and nothing they said. That's a property of the design, not a policy. This is what one stored event actually looks like.</p>
+      </div>
+      <div class="secgrid">
+        <div class="env">
+          <div class="meta"><span>device <b>a722859c</b></span><span>session <b>4538cb34</b></span><span>seq <b>1284</b></span><span>ts <b>13:26:32Z</b></span><span class="tag">● readable by the relay</span></div>
+          <div class="body">
+<pre class="ct">Vm9pZCBUaGUgcmVsYXkgY2Fubm90IHJlYWQgdGhpcy4g
+kQ7pW3nR9xL2mZ0aB8cT4vY6uF1sD5gH7jK9lP2qE4r
+Zx8Cv3Bn6Mq1Wt5Ye9Ru2Io7Pa4Sd6Fg8Hj0Kl3Zx5Cv
+7Bn9Mq2Wt6Ye0Ru3Io8Pa5Sd7Fg9Hj1Kl4Zx6Cv8Bn0Mq
+3Wt7Ye1Ru4Io9Pa6Sd8Fg0Hj2Kl5Zx7Cv9Bn1Mq4Wt8Y
+e2Ru5Io0Pa7Sd9Fg1Hj3Kl6Zx8Cv0Bn2Mq5Wt9Ye3Ru6
+</pre>
+            <div class="seal"><svg viewBox="0 0 24 24"><use href="#lock"/></svg><div>Sealed with <b>AES-256-GCM</b> under key <code style="font-size:12px">session:4538cb34</code><br><small>derived on your devices via HKDF-SHA256 · the relay holds this blob and cannot open it</small></div></div>
+          </div>
+        </div>
+        <div>
+          <div class="pane no"><h3><i></i>What the relay can never read</h3><ul>
+            <li>Any transcript content — messages, tool calls, results, file contents</li>
+            <li>Any prompt you send, question you answer, or approval you give</li>
+            <li>Your account key, your password, or anything derived from them</li>
+            <li>Which model a session is on, its working directory, its title</li>
+          </ul></div>
+          <div class="pane yes"><h3><i></i>What it stores, in the clear</h3><ul>
+            <li>Device ids, session ids, sequence numbers, timestamps — enough to route and resume</li>
+            <li>A hash of your password-derived auth value, and your sealed key blob</li>
+            <li>Approval status — pending, approved, denied, expired — never <i>what</i> was approved</li>
+          </ul></div>
+        </div>
+      </div>
+      <div class="crypto">
+        <div><div class="eyebrow">Transport</div><p>Every payload is <code>AES-256-GCM</code>. Keys are derived per scope — <code>session:&lt;id&gt;</code>, <code>prompt:&lt;id&gt;</code>, <code>approval:&lt;id&gt;</code> — via <code>HKDF-SHA256</code> from your account secret, so no two sessions share a key.</p></div>
+        <div><div class="eyebrow">Identity</div><p>Machines authenticate with <code>Ed25519</code> device keys by challenge–response. Browsers use per-device bearer tokens, so signing in on your phone never signs you out on your laptop, and any device can be revoked alone.</p></div>
+        <div><div class="eyebrow">Your password</div><p>Never reaches the relay. The browser derives an <i>auth hash</i> (sent, to prove who you are) and a <i>wrap key</i> (kept) from it. The wrap key seals your account key into a blob the relay stores but cannot open. Sign-in downloads that blob and unwraps it locally.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="close">
+    <div class="wrap">
+      <div>
+        <div class="eyebrow">Get started</div>
+        <h2 style="margin-top:12px">Leave the desk. <span style="color:var(--ash)">Keep the session.</span></h2>
+        <div class="cta">
+          <div class="install"><span class="pr">$</span><code>npm i -g @astrakratos/tetherd</code></div>
+          <a class="btn primary" href="http://127.0.0.1:8787" target="_blank" rel="noopener">Sign in / Create account</a>
+          <a class="btn" href="#install">How to connect</a>
+        </div>
+      </div>
+      <div class="pairpic" style="align-self:center"><div class="dev"><svg viewBox="0 0 24 24"><use href="#laptop"/></svg>your desk</div><div class="arrow" style="--c:var(--signal)"></div><div class="dev"><svg viewBox="0 0 24 24"><use href="#server"/></svg>relay</div><div class="arrow"></div><div class="dev"><svg viewBox="0 0 24 24"><use href="#mobile"/></svg>your pocket</div></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg>Tether</a>
+    <span class="meta"><span>MIT</span><span>Node ≥ 22.5</span><span>v0.2.3</span></span>
+    <span class="sp"></span>
+    <a href="https://github.com/AstraKratos/tether" target="_blank" rel="noopener">github.com/AstraKratos/tether</a>
+    <a href="https://www.npmjs.com/package/@astrakratos/tetherd" target="_blank" rel="noopener">npm · @astrakratos/tetherd</a>
+  </div>
+</footer>
+
+<script>
+  // Copy the install command; the only script on the page.
+  (function () {
+    var b = document.getElementById('copy'), c = document.getElementById('cmd');
+    if (!b || !c) return;
+    b.addEventListener('click', function () {
+      var t = c.textContent;
+      var done = function () { b.textContent = 'Copied'; b.classList.add('done'); setTimeout(function () { b.textContent = 'Copy'; b.classList.remove('done'); }, 1600); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, done);
+      else { var r = document.createRange(); r.selectNodeContents(c); var s = getSelection(); s.removeAllRanges(); s.addRange(r); try { document.execCommand('copy'); } catch (e) {} s.removeAllRanges(); done(); }
+    });
+  })();
+</script>
