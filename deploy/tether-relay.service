@@ -1,0 +1,52 @@
+# systemd unit for the Tether relay on Linux. The macOS equivalent is
+# `tetherd relay-service install`; this is the same idea — start at boot, restart on failure —
+# for a hosted box.
+#
+#   sudo cp deploy/tether-relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tether-relay
+#   systemctl status tether-relay
+#
+# Assumes: node >= 22.5 on PATH, `npm i -g @astrakratos/tetherd`, and a `tether` user.
+#   sudo useradd --system --create-home --home-dir /var/lib/tether tether
+
+[Unit]
+Description=Tether relay
+Documentation=https://github.com/AstraKratos/tether
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tether
+Group=tether
+
+# Bind to localhost only: Caddy terminates TLS and proxies to it. Nothing should reach the
+# relay directly — it speaks plain HTTP, and pairing codes carry your account encryption key.
+Environment=HOST=127.0.0.1
+Environment=PORT=8787
+# The SQLite database. Accounts, devices, pairings and every stored event live here — put it
+# somewhere backed up, and never on a tmpfs or a container layer that resets on deploy.
+Environment=TETHER_DB=/var/lib/tether/relay.sqlite
+
+ExecStart=/usr/bin/env tetherd relay
+Restart=always
+RestartSec=3
+
+# The relay only ever needs its own data directory.
+StateDirectory=tether
+ReadWritePaths=/var/lib/tether
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tether-relay
+
+[Install]
+WantedBy=multi-user.target

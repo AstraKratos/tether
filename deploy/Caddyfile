@@ -1,0 +1,44 @@
+# Caddy in front of the Tether relay. Caddy gets and renews a Let's Encrypt certificate on
+# its own, which is the whole reason it is here: browsers only expose crypto.subtle — the API
+# the app decrypts with — on a secure origin. Over plain HTTP the app cannot work at all.
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile     # then edit the hostname + email
+#   sudo systemctl reload caddy
+#
+# Point an A record at the box first, or the certificate order will fail.
+
+tether.example.com {
+	encode zstd gzip
+
+	# WebSockets need no special handling in Caddy 2 — reverse_proxy upgrades them.
+	# The relay holds these connections open for hours, so give it a long read timeout.
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+	}
+
+	# ------------------------------------------------------------------------------
+	# READ THIS BEFORE GOING PUBLIC.
+	#
+	# POST /api/register accepts anyone who can reach the relay. On the open internet
+	# that means strangers can create accounts on your server. They cannot read your
+	# sessions — every payload is encrypted under your account key and they do not have
+	# it — but they can consume your disk and your bandwidth.
+	#
+	# Uncomment this block once you have created your own account, and registration is
+	# closed to everyone else. Generate the hash with:  caddy hash-password
+	# ------------------------------------------------------------------------------
+	# @register path /api/register
+	# basic_auth @register {
+	# 	you $2a$14$replace.this.with.the.output.of.caddy.hash.password
+	# }
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	log {
+		output file /var/log/caddy/tether.log
+	}
+}
