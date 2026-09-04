@@ -876,13 +876,24 @@ function cmdRun() {
   const transport = new Transport(
     { relayUrl: id.relay, deviceId: id.deviceId, privKey: id.priv },
     {
-      onAuthed: (cursors) => {
+      onAuthed: (cursors, retainDays) => {
         relayCursors = cursors;
         syncing = true;
         syncStartedAt = Date.now();
         syncTargets = new Map();
         transport.send({ type: 'device_sync', state: 'syncing' });
+        // The relay drops events past its retention window. A session it has swept has no
+        // cursor, which reads as 0 — so without this we would re-upload history the relay
+        // deliberately forgot, and it would sweep it again an hour later, forever. The
+        // transcript's mtime is the honest answer to "has anything happened here lately".
+        const floor = retainDays ? Date.now() - retainDays * 86_400_000 : 0;
+        let skipped = 0;
         for (const s of sessions.values()) {
+          if (floor && !cursors[s.sid]) {
+            let touched = s.lastEventTs;
+            try { if (!touched && s.file) touched = fs.statSync(s.file).mtimeMs; } catch {}
+            if (touched && touched < floor) { skipped += 1; continue; } // older than the relay keeps
+          }
           const relaySeq = cursors[s.sid] ?? 0;
           if (relaySeq > s.cursor) { resetSession(s, `relay ahead (${relaySeq} > ${s.cursor})`); continue; }
           s.ackSeq = relaySeq;
@@ -891,6 +902,7 @@ function cmdRun() {
           syncTargets.set(s.sid, s.cursor);
           flush(s.sid);
         }
+        if (skipped) log(`${skipped} session(s) older than the relay's ${retainDays}-day window; not re-uploading them`);
         maybeSyncDone(); // handles the zero-sessions / already-caught-up case
         pushHealth();
       },

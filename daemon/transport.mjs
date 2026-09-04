@@ -44,7 +44,7 @@ export class Transport {
         this.ready = true;
         this.backoff = 1000;
         this.log('authenticated with relay');
-        this.onAuthed?.(m.cursors ?? {});
+        this.onAuthed?.(m.cursors ?? {}, m.retainDays ?? 0);
       } else if (m.type === 'ping') {
         this.send({ type: 'pong' }, true);
       } else {

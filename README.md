@@ -158,6 +158,37 @@ TETHER_DB=/var/lib/tether/relay.sqlite HOST=0.0.0.0 PORT=8787 tetherd relay
 Put TLS in front of it — pairing codes carry your encryption key. Give `TETHER_DB` a persistent
 volume; it is SQLite, so an ephemeral container loses everything on redeploy.
 
+`deploy/` has a systemd unit and a Caddyfile (automatic Let's Encrypt) for a Linux box. On
+macOS, `tetherd relay-service install` does the same job through launchd.
+
+### Running a relay other people use
+
+A relay open to the internet holds other people's data on a finite disk, so four limits apply.
+All are environment variables, and all can be turned off for a private relay:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `TETHER_RETAIN_DAYS` | `30` | Events older than this are deleted hourly, along with sessions left empty and settled approvals/prompts. `0` keeps everything forever. |
+| `TETHER_MAX_SESSION_EVENTS` | `50000` | Per-session cap, oldest trimmed first, so one runaway session can't fill the disk ahead of the sweep. |
+| `TETHER_REG_PER_IP_PER_DAY` | `5` | New accounts allowed per IP per day. Reads `X-Forwarded-For`, so put it behind a proxy that sets it. |
+| `TETHER_INVITE_CODE` | unset | When set, registration requires this code. Unset means anyone can sign up. |
+
+The relay prints its policy on startup, so you can see what a deployment is actually enforcing.
+
+**Retention only limits how far back the web UI can scroll.** The transcripts themselves live in
+`~/.claude/projects` on each user's own machine and are never touched — nobody loses their
+history, only remote access to the older part of it. Daemons are told the window on connect so
+they don't re-upload sessions the relay has already swept.
+
+Two operational notes. Deleting rows leaves free pages that SQLite reuses, so the file stops
+growing but does not shrink; if you migrate an existing relay and want the space back, run
+`sqlite3 $TETHER_DB VACUUM` once. And back the database up — it holds every account, device
+pairing and stored event:
+
+```bash
+sqlite3 "$TETHER_DB" ".backup /var/backups/tether-$(date +%F).sqlite"
+```
+
 ## Platform support
 
 | | macOS | Linux | Windows |

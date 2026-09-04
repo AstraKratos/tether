@@ -26,6 +26,57 @@ const deviceSyncing = new Map(); // deviceId -> bool (true while backfilling)
 const deviceHealth = new Map(); // deviceId -> {healthCt, at} — opaque e2e blob, kept for fleet snapshots
 const pendingFs = new Map();    // reqId -> {ws, at} — which client asked; payloads stay opaque
 const loginTries = new Map();   // email -> {n, at} — throttle brute-force logins
+
+// ---------------------------------------------------------------- retention & limits
+// A public relay holds other people's data and has a finite disk. Three levers, all
+// tunable from the environment so a private relay can turn them off (0 = keep forever).
+const RETAIN_DAYS = Number(process.env.TETHER_RETAIN_DAYS ?? 30);
+const MAX_SESSION_EVENTS = Number(process.env.TETHER_MAX_SESSION_EVENTS ?? 50_000);
+const REG_PER_IP_PER_DAY = Number(process.env.TETHER_REG_PER_IP_PER_DAY ?? 5);
+// Optional gate: set TETHER_INVITE_CODE and registration needs it. Unset = open to anyone.
+const INVITE_CODE = process.env.TETHER_INVITE_CODE ?? null;
+const regTries = new Map();     // ip -> {n, at}
+
+// Behind Caddy/nginx the socket address is the proxy, so trust the last hop's forwarded-for.
+// Only meaningful when a proxy sets it; direct connections fall back to the socket.
+const clientIp = (req) => {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length) return fwd.split(',').pop().trim();
+  return req.socket?.remoteAddress ?? 'unknown';
+};
+
+/** Keep only the newest MAX_SESSION_EVENTS rows of one session. */
+function trimSession(deviceId, sessionId) {
+  if (!MAX_SESSION_EVENTS) return;
+  try {
+    const { n } = q.countSessionEvents.get(deviceId, sessionId) ?? { n: 0 };
+    if (n <= MAX_SESSION_EVENTS) return;
+    q.trimSessionEvents.run(deviceId, sessionId, deviceId, sessionId, MAX_SESSION_EVENTS);
+    log(`trimmed ${sessionId.slice(0, 8)} to the newest ${MAX_SESSION_EVENTS} events (was ${n})`);
+  } catch (e) { log(`trim failed for ${sessionId}: ${e.message}`); }
+}
+
+/**
+ * Drop everything past the retention window. The transcripts themselves live on the user's
+ * own machine — this only limits how far back the web UI can scroll, and it is the reason
+ * a shared relay's disk stays bounded no matter how long people use it.
+ */
+function sweep() {
+  if (!RETAIN_DAYS) return;
+  const cutoff = now() - RETAIN_DAYS * 86_400_000;
+  try {
+    const ev = q.sweepEvents.run(cutoff).changes;
+    const se = q.sweepSessions.run(cutoff).changes;   // only sessions with no events left
+    const ap = q.sweepApprovals.run(cutoff).changes;  // settled ones; pending are left alone
+    const pr = q.sweepPrompts.run(cutoff).changes;    // delivered ones; queued are left alone
+    q.sweepPairings.run(now());
+    q.sweepClientLinks.run(now());
+    try { db.exec('PRAGMA incremental_vacuum'); } catch {}
+    if (ev || se || ap || pr) {
+      log(`retention sweep (${RETAIN_DAYS}d): ${ev} events, ${se} sessions, ${ap} approvals, ${pr} prompts removed`);
+    }
+  } catch (e) { log(`retention sweep failed: ${e.message}`); }
+}
 const clients = new Set();  // ws (ws.meta = {accountId, name, subs:Set<"dev/sid">})
 
 const q = {
@@ -55,7 +106,18 @@ const q = {
   setSessionNote: db.prepare('UPDATE sessions SET note_ct = ? WHERE device_id = ? AND session_id = ?'),
   sessionsByAccount: db.prepare(`SELECT s.* FROM sessions s JOIN devices d ON d.id = s.device_id
     WHERE d.account_id = ? ORDER BY s.updated_at DESC LIMIT 200`),
-  insertEvent: db.prepare('INSERT OR IGNORE INTO events(device_id, session_id, seq, ts, ct) VALUES (?,?,?,?,?)'),
+  insertEvent: db.prepare('INSERT OR IGNORE INTO events(device_id, session_id, seq, ts, ct, stored_at) VALUES (?,?,?,?,?,?)'),
+  // --- retention & quota ---
+  sweepEvents: db.prepare('DELETE FROM events WHERE stored_at < ?'),
+  sweepSessions: db.prepare(`DELETE FROM sessions WHERE updated_at < ?
+    AND NOT EXISTS (SELECT 1 FROM events e WHERE e.device_id = sessions.device_id AND e.session_id = sessions.session_id)`),
+  sweepApprovals: db.prepare("DELETE FROM approvals WHERE created_at < ? AND status != 'pending'"),
+  sweepPrompts: db.prepare("DELETE FROM prompts WHERE created_at < ? AND status != 'queued'"),
+  sweepPairings: db.prepare('DELETE FROM pairings WHERE expires_at < ?'),
+  sweepClientLinks: db.prepare('DELETE FROM client_links WHERE expires_at < ?'),
+  countSessionEvents: db.prepare('SELECT COUNT(*) AS n FROM events WHERE device_id = ? AND session_id = ?'),
+  trimSessionEvents: db.prepare(`DELETE FROM events WHERE device_id = ? AND session_id = ? AND seq <=
+    (SELECT seq FROM events WHERE device_id = ? AND session_id = ? ORDER BY seq DESC LIMIT 1 OFFSET ?)`),
   maxSeqBySession: db.prepare('SELECT session_id, MAX(seq) AS m FROM events WHERE device_id = ? GROUP BY session_id'),
   lastEvents: db.prepare('SELECT seq, ts, ct FROM events WHERE device_id = ? AND session_id = ? ORDER BY seq DESC LIMIT ?'),
   eventsBefore: db.prepare('SELECT seq, ts, ct FROM events WHERE device_id = ? AND session_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?'),
@@ -159,9 +221,10 @@ function onDaemonMessage(ws, m) {
     }
     case 'events_append': {
       if (!Array.isArray(m.events) || !m.events.length) break;
+      const storedAt = now();
       let upTo = 0;
       for (const ev of m.events) {
-        q.insertEvent.run(deviceId, m.sessionId, ev.seq, ev.ts ?? null, ev.ct);
+        q.insertEvent.run(deviceId, m.sessionId, ev.seq, ev.ts ?? null, ev.ct, storedAt);
         upTo = Math.max(upTo, ev.seq);
       }
       send(ws, { type: 'ack', sessionId: m.sessionId, upTo });
@@ -336,7 +399,10 @@ wss.on('connection', (ws) => {
         q.touchDevice.run(now(), dev.id);
         const cursors = {};
         for (const r of q.maxSeqBySession.all(dev.id)) cursors[r.session_id] = r.m;
-        send(ws, { type: 'authed', cursors });
+        // Tell the daemon how far back we keep things. Without this it reads a swept
+        // session's missing cursor as 0 and re-uploads the whole thing, which the next
+        // sweep deletes again — an upload/delete loop for every session past the window.
+        send(ws, { type: 'authed', cursors, retainDays: RETAIN_DAYS });
         // A daemon that just connected holds no gates: whatever it was holding died with the
         // old process, and the hooks behind those cards have already exited silently. Left
         // alone, the cards would sit in the UI looking live until their deadline. Retire them.
@@ -416,12 +482,28 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/health') return json(res, 200, { ok: true });
 
     if (req.method === 'POST' && url.pathname === '/api/register') {
-      const { accountId, name, email, passSalt, authHash, keyCt } = await readBody(req);
+      const { accountId, name, email, passSalt, authHash, keyCt, invite } = await readBody(req);
       if (!/^[0-9a-f]{16,64}$/.test(accountId ?? '')) return json(res, 400, { error: 'bad accountId' });
       if (q.accountById.get(accountId)) return json(res, 409, { error: 'account exists' });
       const em = String(email ?? '').trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return json(res, 400, { error: 'invalid email' });
       if (!passSalt || !authHash || !keyCt) return json(res, 400, { error: 'missing credentials' });
+      // Registration was the one unguarded door: a loop against it could fill the disk of a
+      // public relay. Optional invite code first, then a per-IP daily cap.
+      if (INVITE_CODE && String(invite ?? '') !== INVITE_CODE) {
+        return json(res, 403, { error: 'this relay is invite-only — ask its operator for a code' });
+      }
+      if (REG_PER_IP_PER_DAY) {
+        const ip = clientIp(req);
+        const t = regTries.get(ip) ?? { n: 0, at: 0 };
+        if (now() - t.at > 86_400_000) { t.n = 0; t.at = now(); }
+        if (t.n >= REG_PER_IP_PER_DAY) {
+          log(`registration rate-limited for ${ip}`);
+          return json(res, 429, { error: 'too many accounts created from here today — try again tomorrow' });
+        }
+        t.n += 1; t.at = t.at || now();
+        regTries.set(ip, t);
+      }
       if (q.accountByEmail.get(em)) return json(res, 409, { error: 'an account with that email already exists' });
       const token = randB64u(32);
       // authHash arrives already password-derived in the browser; hash it once more at rest
@@ -549,4 +631,11 @@ server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 });
 
-server.listen(PORT, HOST, () => log(`tether relay on http://${HOST}:${PORT} (db: ${DB_PATH})`));
+server.listen(PORT, HOST, () => {
+  log(`tether relay on http://${HOST}:${PORT} (db: ${DB_PATH})`);
+  log(RETAIN_DAYS
+    ? `retention: ${RETAIN_DAYS} days · max ${MAX_SESSION_EVENTS} events/session · ${REG_PER_IP_PER_DAY} signups/IP/day${INVITE_CODE ? ' · invite-only' : ''}`
+    : 'retention: disabled (TETHER_RETAIN_DAYS=0) — this relay keeps everything forever');
+  sweep();                                   // once at boot, so a restart also collects
+  setInterval(sweep, 3_600_000).unref();     // and hourly thereafter
+});

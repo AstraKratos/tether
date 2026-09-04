@@ -47,5 +47,20 @@ export function openDb(file) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email) WHERE email IS NOT NULL');
   // the question a session is currently blocked on, so a client connecting later still sees it
   try { db.exec('ALTER TABLE sessions ADD COLUMN note_ct TEXT'); } catch {}
+
+  // Retention needs a timestamp it can trust. events.ts comes from the agent's transcript:
+  // it is free text and may be null, so it cannot drive a DELETE. stored_at is set by the
+  // relay when the row lands, is never null, and is what the sweep orders by.
+  try {
+    db.exec('ALTER TABLE events ADD COLUMN stored_at INTEGER');
+    db.exec(`UPDATE events SET stored_at = ${Date.now()} WHERE stored_at IS NULL`);
+  } catch {}
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_stored ON events(stored_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_session ON events(device_id, session_id, seq)');
+  // Deleting rows leaves free pages behind. SQLite reuses them for new inserts, so the file
+  // stops growing either way, but incremental_vacuum lets the sweep hand space back to the
+  // filesystem. It only takes effect on databases created with it — hence the VACUUM note
+  // in the retention section of the README for anyone migrating an existing relay.
+  try { db.exec('PRAGMA auto_vacuum = INCREMENTAL'); } catch {}
   return db;
 }
