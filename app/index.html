@@ -20,19 +20,44 @@
 </defs></svg>
 
 <div id="setup" hidden>
-  <div class="setup-card">
+  <aside class="setup-side" aria-hidden="true">
     <div class="setup-brand"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg><span>Tether</span></div>
-    <p class="setup-lede">Mirror your local Claude Code sessions, get pinged the moment one needs you, and answer — approve, reject, prompt — from anywhere. End-to-end encrypted; the key never leaves your devices.</p>
-    <label>Email<input id="setupEmail" type="email" placeholder="you@example.com" autocomplete="username"></label>
+    <h1 class="setup-h">Your agent stopped to ask.<br><em>Answer from anywhere.</em></h1>
+    <ul class="setup-proof">
+      <li><b>End-to-end encrypted.</b> The relay stores ciphertext and routing metadata — never a message.</li>
+      <li><b>Your key never leaves your devices.</b> It lives in this browser and on the machines you pair.</li>
+      <li><b>Sign in anywhere.</b> Every device gets its own token; signing out here never touches your machines.</li>
+    </ul>
+    <div class="setup-strip"><span>AES-256-GCM</span><span>HKDF-SHA256</span><span>Ed25519</span></div>
+  </aside>
+
+  <!-- One form, two modes. The segmented control flips data-mode; .for-signin / .for-create show
+       accordingly. Every id below is what app.js wires, so the auth logic is untouched. -->
+  <div class="setup-card" id="authCard" data-mode="signin">
+    <div class="setup-brand setup-brand-m"><svg class="mk" viewBox="0 0 100 100"><use href="#bond"/></svg><span>Tether</span></div>
+    <div class="seg" role="tablist" aria-label="Sign in or create an account">
+      <button type="button" id="modeSignin" role="tab" aria-selected="true">Sign in</button>
+      <button type="button" id="modeCreate" role="tab" aria-selected="false">Create account</button>
+    </div>
+    <h2 class="setup-title"><span class="for-signin">Welcome back</span><span class="for-create">Create your account</span></h2>
+    <p class="setup-lede">
+      <span class="for-signin">Use the email and password from when you created the account. Your encryption key is unlocked here, in the browser — the server never has it.</span>
+      <span class="for-create">Your account id and encryption key are generated in this browser. The server is handed a hash to verify you and a sealed copy of the key it can never open.</span>
+    </p>
+    <label>Email<input id="setupEmail" type="email" placeholder="you@example.com" autocomplete="username" inputmode="email" spellcheck="false"></label>
     <label>Password<input id="setupPass" type="password" placeholder="min 8 characters" minlength="8" autocomplete="current-password"></label>
+    <p class="setup-note for-create">This password seals your encryption key and never reaches the server — which also means the server can't reset it. Keep it somewhere safe.</p>
     <label>Name this device<input id="setupName" placeholder="e.g. akhil-phone" maxlength="40" autocomplete="off"></label>
-    <button id="signinBtn" class="btn primary block">Sign in</button>
-    <button id="createBtn" class="btn block">Create account</button>
-    <div class="divider"><span>or use a one-time link code</span></div>
-    <label>Login code from another device<input id="loginCode" placeholder="TETHERC.…" autocomplete="off"></label>
-    <button id="loginBtn" class="btn block">Log in with code</button>
-    <p class="setup-hint">Each email is its own account — sessions, machines, and keys are fully isolated per account.</p>
-    <p class="err" id="setupErr"></p>
+    <button id="signinBtn" class="btn primary block for-signin">Sign in</button>
+    <button id="createBtn" class="btn primary block for-create">Create account</button>
+    <p class="err" id="setupErr" role="alert"></p>
+    <details class="setup-alt">
+      <summary>Have a login code from another device?</summary>
+      <p class="setup-hint">On a signed-in device press <b>Link a device</b> and paste the one-time <code>TETHERC.…</code> code here. It expires in 10 minutes; the server only ever sees its hash.</p>
+      <label>Login code<input id="loginCode" placeholder="TETHERC.…" autocomplete="off" spellcheck="false"></label>
+      <button id="loginBtn" class="btn block">Log in with code</button>
+    </details>
+    <p class="setup-hint setup-foot">Each email is its own account — sessions, machines and keys are fully isolated per account.</p>
   </div>
 </div>
 

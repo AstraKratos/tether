@@ -1562,7 +1562,25 @@ function boot() {
 
 $('createBtn')?.addEventListener('click', createAccount);
 $('signinBtn')?.addEventListener('click', signIn);
-$('setupPass')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
+// Sign in and Create account share one form. The segmented control sets data-mode on the
+// card, CSS shows the matching copy and button, and Enter submits whichever mode is active —
+// before this, Enter always meant "sign in", even with Create account in front of you.
+const authCard = $('authCard');
+function setAuthMode(mode) {
+  if (!authCard) return;
+  authCard.dataset.mode = mode;
+  $('modeSignin')?.setAttribute('aria-selected', String(mode === 'signin'));
+  $('modeCreate')?.setAttribute('aria-selected', String(mode === 'create'));
+  // tells password managers whether to offer a saved password or generate a new one
+  $('setupPass')?.setAttribute('autocomplete', mode === 'create' ? 'new-password' : 'current-password');
+  $('setupErr').textContent = '';
+}
+$('modeSignin')?.addEventListener('click', () => setAuthMode('signin'));
+$('modeCreate')?.addEventListener('click', () => setAuthMode('create'));
+const submitAuth = () => (authCard?.dataset.mode === 'create' ? createAccount() : signIn());
+$('setupPass')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
+$('setupName')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
+$('loginCode')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loginWithCode(); });
 $('attachBtn2')?.addEventListener('click', attachEmailLogin);
 $('loginBtn')?.addEventListener('click', loginWithCode);
 $('linkBtn')?.addEventListener('click', openLink);

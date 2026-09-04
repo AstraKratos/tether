@@ -54,18 +54,60 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 textarea{resize:vertical}
 
 /* ---------------- setup / login ---------------- */
-#setup{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
-.setup-card{width:100%;max-width:400px;background:linear-gradient(180deg,var(--panel),#0B1015);
-  border:1px solid var(--line);border-radius:18px;padding:30px 28px;
+/* ---------------- sign in / create account ----------------
+   A split screen: the left half says what Tether is and why the key never leaves you; the
+   right half is one form in two modes. On a phone the aside goes and the card carries the brand. */
+#setup{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,460px);min-height:100vh}
+.setup-side{position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:center;gap:26px;
+  padding:56px clamp(28px,6vw,88px);border-right:1px solid var(--line);
+  background:radial-gradient(640px 360px at 30% 40%,var(--accent-soft),transparent 70%),
+             radial-gradient(circle at 1px 1px,rgba(231,237,242,.06) 1px,transparent 1.6px) 0 0/22px 22px,var(--rail)}
+.setup-side .setup-brand{font-size:22px}
+.setup-h{margin:0;font:800 clamp(30px,3.6vw,46px)/1.05 "Hanken Grotesk",sans-serif;letter-spacing:-.035em;text-wrap:balance;max-width:16ch}
+.setup-h em{font-style:normal;color:var(--muted);font-weight:600}
+.setup-proof{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:14px;max-width:46ch}
+.setup-proof li{position:relative;padding-left:20px;font-size:14.5px;line-height:1.55;color:var(--muted)}
+.setup-proof li::before{content:"";position:absolute;left:0;top:.62em;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.setup-proof b{color:var(--text);font-weight:600}
+.setup-strip{display:flex;flex-wrap:wrap;gap:8px}
+.setup-strip span{font:500 11px/1 "JetBrains Mono",monospace;letter-spacing:.06em;color:var(--dim);border:1px solid var(--line2);border-radius:999px;padding:6px 10px}
+
+.setup-card{align-self:center;justify-self:center;width:100%;max-width:420px;margin:32px 24px;
+  background:linear-gradient(180deg,var(--panel),#0B1015);border:1px solid var(--line);border-radius:18px;padding:28px 28px 24px;
   box-shadow:0 24px 60px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.02) inset}
 .setup-brand{font-size:20px;margin-bottom:14px}
 .setup-brand .mk{width:30px;height:30px}
+.setup-brand-m{display:none}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;background:var(--rail);border:1px solid var(--line);border-radius:12px;margin-bottom:22px}
+.seg button{font:600 13px/1 "Hanken Grotesk",sans-serif;color:var(--muted);background:none;border:0;border-radius:9px;padding:10px 0;cursor:pointer;transition:background .12s,color .12s}
+.seg button:hover{color:var(--text)}
+.seg button[aria-selected="true"]{background:var(--panel2);color:var(--text);box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 2px 8px rgba(0,0,0,.35)}
+.setup-title{margin:0 0 8px;font:800 22px/1.15 "Hanken Grotesk",sans-serif;letter-spacing:-.025em}
 .setup-lede{color:var(--muted);font-size:13.5px;line-height:1.6;margin:0 0 6px}
+.setup-note{margin:8px 0 0;padding:9px 11px;border-radius:8px;background:var(--warn-soft);border:1px solid var(--warn-line);color:var(--text);font-size:12.5px;line-height:1.5}
+/* one form, two modes */
+.setup-card[data-mode="signin"] .for-create{display:none}
+.setup-card[data-mode="create"] .for-signin{display:none}
+.setup-card .btn.block{margin-top:18px}
+.setup-alt{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+.setup-alt summary{cursor:pointer;list-style:none;font-size:13px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:8px}
+.setup-alt summary::-webkit-details-marker{display:none}
+.setup-alt summary::before{content:"";width:6px;height:6px;border-right:1.5px solid var(--dim);border-bottom:1.5px solid var(--dim);transform:rotate(-45deg);transition:transform .15s;margin-left:2px}
+.setup-alt[open] summary::before{transform:rotate(45deg)}
+.setup-alt summary:hover{color:var(--text)}
+.setup-alt code{font-size:12px;color:var(--text)}
 .divider{display:flex;align-items:center;gap:12px;margin:20px 0 4px;color:var(--dim);
   font:500 11px/1 "JetBrains Mono",monospace;letter-spacing:.04em}
 .divider::before,.divider::after{content:"";flex:1;border-top:1px solid var(--line)}
-.setup-hint{color:var(--dim);font-size:12px;margin:12px 0 0}
+.setup-hint{color:var(--dim);font-size:12px;margin:12px 0 0;line-height:1.5}
 .setup-hint b{color:var(--muted)}
+.setup-foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+@media (max-width:880px){
+  #setup{grid-template-columns:1fr;min-height:100vh;align-content:start;padding-top:8vh}
+  .setup-side{display:none}
+  .setup-brand-m{display:flex}
+  .setup-card{margin:0 auto}
+}
 #createBtn{margin-top:18px}
 #loginBtn{margin-top:12px}
 
