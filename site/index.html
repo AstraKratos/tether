@@ -172,26 +172,31 @@
   .qcard .send{margin-top:4px;text-align:center;font:700 11.5px/1 var(--sans);padding:9px;border-radius:8px;background:var(--signal);color:#150703}
 
   /* how it works: nodes on a live rail */
-  .flowwrap{position:relative;padding-top:34px}
+  /* The rail sits above the nodes: 34px of track, then the transition labels, then the cards.
+     padding-top has to clear BOTH or the labels land on the card tops. */
+  .flowwrap{position:relative;padding-top:58px}
   .rail{position:absolute;left:5%;right:5%;top:0;height:34px}
   .rail::before{content:"";position:absolute;left:0;right:0;top:14px;height:1px;background:repeating-linear-gradient(90deg,var(--line2) 0 6px,transparent 6px 11px)}
   .pkt{position:absolute;top:10px;width:9px;height:9px;border-radius:50%;background:var(--signal);box-shadow:0 0 10px rgba(255,90,52,.8);left:0;opacity:0}
   .pkt.b{animation-delay:2s!important;background:var(--bone);box-shadow:0 0 10px rgba(231,237,242,.6)}
   .pkt.c{animation-delay:4s!important}
   @keyframes pkt{0%{left:0;opacity:0}4%{opacity:1}46%{opacity:1}50%{left:100%;opacity:0}100%{left:100%;opacity:0}}
-  .wire{position:absolute;left:5%;right:5%;top:26px;display:grid;grid-template-columns:repeat(3,1fr);font:500 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);text-align:center}
+  /* Inset by an eighth so the three labels centre on the gaps BETWEEN the four nodes —
+     they name the transitions, not the nodes. */
+  .wire{position:absolute;left:12.5%;right:12.5%;top:26px;display:grid;grid-template-columns:repeat(3,1fr);font:500 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);text-align:center}
   .wire span:nth-child(2){color:var(--ash)}
   .flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:stretch}
   .node{background:var(--slate);border:1px solid var(--line2);border-radius:12px;padding:18px 18px 16px;position:relative}
   .node .eyebrow{margin-bottom:10px}
-  .node .pic{height:64px;border-radius:9px;background:var(--ink);border:1px solid var(--line);margin-bottom:14px;display:grid;place-items:center;overflow:hidden}
+  .node .pic{min-height:64px;padding:8px 0;border-radius:9px;background:var(--ink);border:1px solid var(--line);margin-bottom:14px;display:grid;place-items:center;overflow:hidden}
   .node h3{font-size:16px;font-weight:700;margin-bottom:6px}
   .node p{font-size:13.5px;color:var(--ash);line-height:1.55}
   .node .sees{margin-top:12px;font:500 11px/1.5 var(--mono);color:var(--dim)}
   .node .sees b{color:var(--ash);font-weight:500}
   .node.relay{background:linear-gradient(180deg,var(--slate),var(--ink))}
   .node.you{border-color:var(--signal-line)}
-  .pic .ln{font:500 10.5px/1.5 var(--mono);color:var(--ash);white-space:pre;text-align:left}
+  /* wrap rather than clip: these samples are longer than a quarter-width card at some widths */
+  .pic .ln{font:500 10.5px/1.5 var(--mono);color:var(--ash);white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;width:100%;padding:0 10px}
   .pic .ln b{color:var(--bone);font-weight:500}
   .pic .ct{font:500 10.5px/1.5 var(--mono);color:var(--dim);white-space:pre;letter-spacing:.02em}
   .pic svg{width:30px;height:30px;color:var(--ash)}
