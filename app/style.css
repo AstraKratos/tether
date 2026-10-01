@@ -595,3 +595,34 @@ pre.wrap{background:var(--code);border:1px solid var(--line2);border-radius:10px
 .chkrow input{width:auto;margin:2px 0 0;accent-color:var(--accent);flex:0 0 auto}
 
 #pairCmd{white-space:pre-wrap;line-height:1.7}
+
+/* ---------------- handoff: continue a chat in another agent ---------------- */
+#handoffBar{display:flex;flex-direction:column;gap:6px;padding:8px 24px 0}
+.hobar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:9px 12px;border-radius:10px;
+  border:1px solid var(--warn-line);background:var(--warn-soft);color:var(--text);font-size:13px}
+.hobar span{flex:1 1 240px;min-width:0}
+.hoflow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.hoflow .holink{border:1px solid var(--line2);background:var(--panel2);color:var(--text);border-radius:999px;
+  padding:3px 10px 3px 4px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font:600 12px/1.3 "Hanken Grotesk",sans-serif}
+.hoflow .holink:hover{background:var(--raise)}
+.hoflow .holink.off{cursor:default;opacity:.7}
+.hoflow .achip .amono{width:16px;height:16px}
+#paneHeader .hobtn{gap:6px}
+#hoResult{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--panel2);font-size:13px}
+#hoResult.bad{border-color:var(--danger-soft);color:var(--danger)}
+#hoResult pre{margin:8px 0;white-space:pre-wrap;word-break:break-word}
+#hoResult .hosum{color:var(--muted);font-size:12px;margin-top:4px}
+@media (max-width:760px){ #handoffBar{padding:8px 12px 0} #paneHeader .hobtn span{display:none} }
+
+/* ---------------- mobile apps: settings / connection profiles ---------------- */
+.native-only{display:none!important}
+html.native .native-only:not([hidden]){display:inline-flex!important}
+html.native .btn.block.native-only{display:flex!important;justify-content:center;margin-top:12px}
+.proflist{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px}
+.profrow{display:flex;align-items:center;gap:6px;padding:9px 10px;border:1px solid var(--line2);border-radius:10px;background:var(--panel2)}
+.profrow.on{border-color:var(--accent-line);background:var(--accent-soft)}
+.profrow .pmain{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.profrow .ptag{font:700 9px/1 "JetBrains Mono",monospace;color:var(--accent);background:var(--accent-soft);padding:3px 6px;border-radius:999px}
+.profrow .ppath{flex:1 0 100%;color:var(--dim);font:400 11.5px/1.3 "JetBrains Mono",monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#profMsg.ok{color:var(--ok)} #profMsg.hint{color:var(--muted)}
+label small{font-weight:400;color:var(--dim)}
