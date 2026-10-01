@@ -10,7 +10,7 @@ import { randHex } from './crypto.mjs';
 // Windows has no unix-domain sockets; Node exposes the same API over a named pipe.
 export const SOCK_PATH = process.platform === 'win32'
   ? '\\\\.\\pipe\\tether-hook'
-  : path.join(os.homedir(), '.tether', 'hook.sock');
+  : path.join(process.env.TETHER_HOME || path.join(os.homedir(), '.tether'), 'hook.sock');
 
 export class HookBridge {
   /**

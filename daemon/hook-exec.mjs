@@ -19,7 +19,7 @@ import os from 'node:os';
 
 const SOCK = process.platform === 'win32'
   ? '\\\\.\\pipe\\tether-hook'   // windows named pipe; same http API
-  : path.join(os.homedir(), '.tether', 'hook.sock');
+  : path.join(process.env.TETHER_HOME || path.join(os.homedir(), '.tether'), 'hook.sock');
 const event = process.argv[2] || 'Unknown';
 const isGate = event === 'PermissionRequest';
 // Ceiling only. The daemon answers the moment it decides not to hold, when a person

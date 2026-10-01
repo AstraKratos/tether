@@ -115,6 +115,44 @@ export class Executor {
     });
   }
 
+  /**
+   * Start a session handed off from another agent (see handoff.mjs). Interactive runs get the
+   * prompt as the CLI's own start-up argument — `claude "<prompt>"`, `cursor-agent "<prompt>"`,
+   * `codex "<prompt>"` — so nothing has to be typed into a TUI whose readiness we would have to
+   * guess. Headless runs are ordinary one-shot runs.
+   */
+  startHandoff(job, report) {
+    if (!job.interactive) return this.run({ ...job, sessionId: null }, report);
+    const o = job.opts ?? {};
+    const model = MODEL_RE.test(o.model ?? '') ? o.model : null;
+    const env = { ...process.env, PATH: `${process.env.PATH ?? ''}:/usr/local/bin:/opt/homebrew/bin` };
+    const tmux = (args) => execFileSync('tmux', args, { timeout: 8000, maxBuffer: 2_000_000, env }).toString();
+    const term = terminalBackend();
+    if (term.kind !== 'tmux') return report('failed', `cannot start an interactive session: ${term.reason}`);
+    const agent = AGENT_BIN[job.agent] ? job.agent : 'claude';
+    const argv = [agent === 'claude' ? this.claudeBin : AGENT_BIN[agent]];
+    if (model) argv.push(agent === 'codex' ? '-m' : '--model', model);
+    if (agent === 'claude' && CLAUDE_MODES.has(o.mode)) argv.push('--permission-mode', o.mode);
+    argv.push(String(job.text).replace(/[\r\n]+/g, ' '));
+    // tmux runs its command through a shell, so every argument is single-quoted.
+    const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    const name = `tether-${String(job.promptId).replace(/[^a-zA-Z0-9_-]/g, '').slice(-14)}`;
+    report('executing');
+    try {
+      tmux(['new-session', '-d', '-s', name, '-c', job.cwd, argv.map(q).join(' ')]);
+    } catch (e) {
+      return report('failed', `could not start tmux session: ${e.message}`);
+    }
+    // An agent that exits straight away (not logged in, bad flag) takes its tmux session
+    // with it: check once it has had a moment, so that is reported instead of "started".
+    setTimeout(() => {
+      try { tmux(['has-session', '-t', name]); }
+      catch { return report('failed', `${argv[0]} exited right after starting — run it once in a terminal to check it is logged in`); }
+      this.log(`handoff: started ${agent} in tmux "${name}" (cwd ${job.cwd})`);
+      report('done', `started in tmux session "${name}" — attach with: tmux attach -t ${name}`);
+    }, 3000);
+  }
+
   /** Start an interactive agent in a tmux window, then type the first prompt into it. */
   runInteractive(job, report, { model, mode }) {
     const env = { ...process.env, PATH: `${process.env.PATH ?? ''}:/usr/local/bin:/opt/homebrew/bin` };
