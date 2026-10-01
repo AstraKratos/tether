@@ -1,0 +1,22 @@
+{
+  "name": "tether-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tether for Android and iOS: the Tether web app bundled on-device, with a Settings screen for relay connections.",
+  "type": "module",
+  "scripts": {
+    "web": "node scripts/copy-web.mjs",
+    "sync": "node scripts/copy-web.mjs && cap sync",
+    "android:apk": "node scripts/copy-web.mjs && cap sync android && cd android && ./gradlew assembleDebug",
+    "android:run": "node scripts/copy-web.mjs && cap run android",
+    "ios:open": "node scripts/copy-web.mjs && cap sync ios && cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/ios": "^7.6.9"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.6.9"
+  }
+}

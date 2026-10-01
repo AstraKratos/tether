@@ -1,0 +1,10 @@
+node_modules/
+www/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+ios/App/build/
+# copies of ../app made by `npm run sync`; regenerated on every build
+android/app/src/main/assets/public/
+ios/App/App/public/
