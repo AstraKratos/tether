@@ -16,7 +16,7 @@ import path from 'node:path';
 import os from 'node:os';
 import readline from 'node:readline';
 
-const SOCK = path.join(os.homedir(), '.tether', 'hook.sock');
+const SOCK = path.join(process.env.TETHER_HOME || path.join(os.homedir(), '.tether'), 'hook.sock');
 const SESSION_ID = process.env.TETHER_SESSION_ID || null;
 const TOOL_NAME = 'permission_prompt';
 const PROTOCOL = '2024-11-05';

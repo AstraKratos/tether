@@ -5,8 +5,26 @@ import { b64u, sha256hex, randBytes, randHex, deriveKey, encryptJSON, decryptJSO
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// ---------------------------------------------------------------- where the relay is
+// The web app is served BY a relay, so its relay is simply this page's origin. The mobile apps
+// (mobile/, Capacitor) are served from the phone itself and talk to whichever relay the active
+// connection profile names — one profile per environment (home, work, self-hosted…), each with
+// its own sign-in. Profiles are edited in Settings, which only the apps show.
+const NATIVE = !!window.Capacitor?.isNativePlatform?.() || localStorage.getItem('tether.forceNative') === '1';
+document.documentElement.classList.toggle('native', NATIVE);
+const PROFILES_KEY = 'tether.profiles';
+function loadProfiles() {
+  try { const p = JSON.parse(localStorage.getItem(PROFILES_KEY) ?? 'null'); if (Array.isArray(p?.list)) return p; } catch {}
+  return { active: null, list: [] };
+}
+const PROFILES = loadProfiles();
+const activeProfile = () => PROFILES.list.find((x) => x.id === PROFILES.active) ?? null;
+const RELAY = ((NATIVE ? activeProfile()?.relay : null) || location.origin).replace(/\/+$/, '');
+const api = (p) => `${RELAY}${p}`;
+const CFG_KEY = NATIVE && PROFILES.active ? `tether@${PROFILES.active}` : 'tether';
+
 let cfg = null;
-try { cfg = JSON.parse(localStorage.getItem('tether') ?? 'null'); } catch {}
+try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) ?? 'null'); } catch {}
 
 const S = {
   ws: null, connected: false,
@@ -29,7 +47,7 @@ const TETHERD_PKG = '@astrakratos/tetherd';
 
 // ---------------------------------------------------------------- setup
 function saveCfg() {
-  try { localStorage.setItem('tether', JSON.stringify(cfg)); }
+  try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
   catch { alert('Heads up: this browser is blocking site storage (private window?). Tether will work until you close the tab, then you will need to sign in again.'); }
 }
 function readCreds(err) {
@@ -57,9 +75,9 @@ async function createAccount() {
     const passSalt = b64u.enc(randBytes(16));
     const { authHash, wrapKey } = await passKeys(creds.email, creds.password, passSalt);
     const keyCt = await wrapSecret(wrapKey, accountSecret);
-    const res = await fetch('/api/register', {
+    const res = await fetch(api('/api/register'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ accountId, name, email: creds.email, passSalt, authHash, keyCt }),
+      body: JSON.stringify({ accountId, name, email: creds.email, passSalt, authHash, keyCt, invite: activeProfile()?.invite || undefined }),
     });
     if (!res.ok) return err(`Could not register: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
     const { clientToken } = await res.json();
@@ -83,14 +101,14 @@ async function signIn() {
   btn.disabled = true;
   try {
     const name = $('setupName').value.trim() || 'device';
-    const saltRes = await fetch('/api/login-salt', {
+    const saltRes = await fetch(api('/api/login-salt'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: creds.email }),
     });
     if (!saltRes.ok) return err(`Sign in failed: ${(await saltRes.json().catch(() => ({}))).error ?? saltRes.status}`);
     const { passSalt } = await saltRes.json();
     const { authHash, wrapKey } = await passKeys(creds.email, creds.password, passSalt);
-    const res = await fetch('/api/login', {
+    const res = await fetch(api('/api/login'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: creds.email, authHash, name }),
     });
@@ -119,7 +137,7 @@ async function attachEmailLogin() {
   const passSalt = b64u.enc(randBytes(16));
   const { authHash, wrapKey } = await passKeys(email, password, passSalt);
   const keyCt = await wrapSecret(wrapKey, cfg.accountSecret);
-  const res = await fetch('/api/account/email', {
+  const res = await fetch(api('/api/account/email'), {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.clientToken}`, 'x-account-id': cfg.accountId },
     body: JSON.stringify({ email, passSalt, authHash, keyCt }),
@@ -143,14 +161,14 @@ async function loginWithCode() {
   if (btn.disabled) return;
   btn.disabled = true;
   try {
-    const res = await fetch('/api/client-link/redeem', {
+    const res = await fetch(api('/api/client-link/redeem'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ accountId: parsed.a, linkToken: parsed.t, name }),
     });
     if (!res.ok) return err(`Login failed: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
     const { clientToken, email } = await res.json();
     cfg = { accountId: parsed.a, accountSecret: parsed.k, clientToken, name, email: email ?? undefined };
-    try { localStorage.setItem('tether', JSON.stringify(cfg)); }
+    try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
     catch { alert('Heads up: this browser is blocking site storage (private window?). Tether will work until you close the tab, then you will need to log in again with a link code.'); }
     boot();
   } catch (e) {
@@ -162,7 +180,7 @@ async function loginWithCode() {
 
 async function openLink() {
   const linkToken = b64u.enc(randBytes(16));
-  const res = await fetch('/api/client-links', {
+  const res = await fetch(api('/api/client-links'), {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.clientToken}`, 'x-account-id': cfg.accountId },
     body: JSON.stringify({ codeHash: await sha256hex(linkToken) }),
@@ -180,7 +198,7 @@ function connect() {
   clearTimeout(reconnT);
   // drop any previous socket without letting its close handler schedule a rival retry
   try { if (S.ws && S.ws.readyState <= 1) { S.ws.onclose = null; S.ws.close(); } } catch {}
-  const ws = new WebSocket(`${location.origin.replace(/^http/, 'ws')}/ws`);
+  const ws = new WebSocket(`${RELAY.replace(/^http/, 'ws')}/ws`);
   S.ws = ws;
   ws.onmessage = async (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
@@ -255,6 +273,8 @@ async function handle(m) {
     }
     case 'device_presence': {
       const d = S.devices.get(m.deviceId);
+      // a machine paired after this app loaded its list: fetch a fresh snapshot to learn it
+      if (!d) { send({ type: 'refresh' }); break; }
       if (d) {
         d.online = m.online;
         if ('syncing' in m) d.syncing = m.syncing;
@@ -287,11 +307,13 @@ async function handle(m) {
       break;
     }
     case 'session_upsert': {
+      if (!S.devices.has(m.deviceId)) { send({ type: 'refresh' }); break; } // newly paired machine
       const k = keyOf(m.deviceId, m.sessionId);
       S.sessions.set(k, { deviceId: m.deviceId, sessionId: m.sessionId, agent: m.agent, state: m.state, updatedAt: m.updatedAt, meta: await decMeta(m.sessionId, m.metaCt) });
       if (S.pendingStates.has(k)) { S.sessions.get(k).state = S.pendingStates.get(k); S.pendingStates.delete(k); }
       renderFleet();
       if (S.current === k) { renderPaneHeader(); redrawAgentOpts(); } // model may have changed
+      else if (S.current) renderHandoffBar(); // the other side of a handoff may have just appeared
       break;
     }
     case 'state_change': {
@@ -787,14 +809,122 @@ function renderPaneHeader() {
     ${s.meta?.model ? `<span class="mbadge" title="model serving this session">${esc(modelName(s.meta.model))}</span>` : ''}
     ${s.meta?.permissionMode ? `<span class="mbadge" title="permission mode in the local session">${esc(s.meta.permissionMode)}</span>` : ''}
     <span class="spacer"></span>
+    <button id="hoBtn" class="btn ghost small hobtn" title="Continue this chat in another agent, with its full context">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg><span>Continue in…</span>
+    </button>
     <button id="inspToggle" class="ibtn ${INSP.open ? 'on' : ''}" title="Files &amp; changes">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h5l2 2.5h8A1.5 1.5 0 0 1 21 8v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/></svg>
     </button>`;
   $('inspToggle').addEventListener('click', () => toggleInspector());
+  $('hoBtn')?.addEventListener('click', () => openHandoff());
+  renderHandoffBar();
   // On a phone the pane IS the screen, so leaving it means going back to the list. The
   // button is display:none above 760px, where both are visible at once and back is meaningless.
   $('backBtn')?.addEventListener('click', () => showSessionList());
 }
+
+// ---------------------------------------------------------------- handoff
+// Continue a chat in another agent — when Claude Code hits its plan limit, pick the same work up
+// in Cursor or Codex (or the other way round). The daemon writes the context into the project
+// and starts the target on it; see daemon/handoff.mjs.
+const HANDOFF_TARGETS = ['claude', 'cursor', 'codex'];
+const HO = { key: null, target: null };
+
+function hoLink(deviceId, sessionId, agent, fallbackTitle) {
+  const k = sessionId ? keyOf(deviceId, sessionId) : null;
+  const known = k && S.sessions.get(k);
+  const label = known ? sessName(known) : (fallbackTitle || (sessionId ? sessionId.slice(0, 8) : 'starting…'));
+  return `<button type="button" class="holink ${known ? '' : 'off'}" ${known ? `data-go="${esc(k)}"` : 'disabled'}
+    title="${known ? 'Open this session' : 'Not mirrored here yet'}">${agentChip(agent)}${esc(label)}</button>`;
+}
+function renderHandoffBar() {
+  const el = $('handoffBar');
+  if (!el) return;
+  const s = S.current && S.sessions.get(S.current);
+  const m = s?.meta ?? {};
+  const out = [];
+  if (m.limitHit) {
+    out.push(`<div class="hobar"><span>⏸ ${esc(agentDef(s.agent).name)} stopped on a plan limit — “${esc(m.limitHit.text)}”</span>
+      <button type="button" class="btn primary small" data-ho="1">Continue in another agent</button></div>`);
+  }
+  if (m.handoffFrom) {
+    out.push(`<div class="hoflow">↩ Continues ${hoLink(s.deviceId, m.handoffFrom.sessionId, m.handoffFrom.agent, m.handoffFrom.title)}</div>`);
+  }
+  if (m.handoffTo?.length) {
+    out.push(`<div class="hoflow">→ Continued in ${m.handoffTo.slice(-3).map((t) =>
+      hoLink(s.deviceId, t.sessionId, t.agent, t.sessionId ? null : `${agentDef(t.agent).name} · ${timeago(t.at)} ago`)).join(' ')}</div>`);
+  }
+  el.hidden = !out.length;
+  el.innerHTML = out.join('');
+  el.querySelector('[data-ho]')?.addEventListener('click', () => openHandoff());
+  el.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => select(b.dataset.go)));
+}
+
+async function openHandoff() {
+  const k = S.current;
+  const s = k && S.sessions.get(k);
+  if (!s) return;
+  HO.key = k;
+  $('hoSource').innerHTML = `${agentChip(s.agent, true)} <b>${esc(sessName(s))}</b>`
+    + ((s.meta?.projectCwd || s.meta?.cwd) ? ` <span class="mono" style="font-size:12px">${esc(shortPath(s.meta.projectCwd || s.meta.cwd))}</span>` : '');
+  $('hoResult').hidden = true;
+  $('hoGo').disabled = false;
+  $('hoAgents').innerHTML = '<p class="ihint">detecting agents on this machine…</p>';
+  handoffDlg.showModal();
+  const deviceId = k.split('/')[0];
+  const info = await ensureAgentInfo(deviceId);
+  if (HO.key !== k) return;
+  const rows = info?.agents ?? [];
+  const state = (a) => { const r = rows.find((x) => x.agent === a); return !r ? 'not installed' : r.broken ? 'broken' : null; };
+  const usable = HANDOFF_TARGETS.filter((a) => !state(a));
+  // default to a DIFFERENT agent than the one that stopped — that is the usual reason to be here
+  if (!usable.includes(HO.target)) HO.target = usable.find((a) => a !== s.agent) ?? usable[0] ?? null;
+  const draw = () => {
+    $('hoAgents').innerHTML = HANDOFF_TARGETS.map((a) => {
+      const d = agentDef(a), why = state(a);
+      const mark = d.img ? `<img src="${d.img}" alt="">` : `<span class="amono" style="--ac:${d.color}">${d.glyph}</span>`;
+      return `<button type="button" class="agchip ${why ? 'dis' : ''} ${HO.target === a ? 'sel' : ''}" data-a="${a}" ${why ? 'disabled' : ''}
+        title="${why ? `${esc(d.name)} is ${why} on this machine` : esc(d.name)}">${mark}<span>${esc(d.name)}</span>${why ? `<span class="aguse">${why}</span>` : ''}</button>`;
+    }).join('') + (info?.error ? `<p class="ihint">${esc(info.error)}</p>` : '');
+    $('hoAgents').querySelectorAll('.agchip:not(.dis)').forEach((b) => b.addEventListener('click', () => { HO.target = b.dataset.a; draw(); }));
+    $('hoGo').disabled = !HO.target;
+  };
+  draw();
+}
+
+async function doHandoff() {
+  if (!HO.key || !HO.target) return;
+  const [deviceId, sessionId] = HO.key.split('/');
+  const mode = document.querySelector('input[name="hoMode"]:checked')?.value ?? 'interactive';
+  const note = $('hoNote').value.trim();
+  const res = $('hoResult');
+  res.hidden = false; res.className = '';
+  res.textContent = mode === 'file' ? 'Writing the handoff…' : `Writing the handoff and starting ${agentDef(HO.target).name}…`;
+  $('hoGo').disabled = true;
+  const r = await fsReq('handoff', { sessionId, target: HO.target, mode, note: note || null }, deviceId);
+  $('hoGo').disabled = false;
+  if (r.error || !r.ok) {
+    res.className = 'bad';
+    res.innerHTML = r.path
+      ? `The context was written to <code>${esc(r.relPath)}</code>, but ${esc(agentDef(HO.target).name)} did not start: ${esc(r.error ?? 'unknown error')}`
+      : `Handoff failed: ${esc(r.error ?? 'unknown error')}`;
+    return;
+  }
+  const sm = r.summary ?? {};
+  const facts = [`${sm.requests ?? 0} request(s)`, `${sm.filesChanged ?? 0} file(s) changed`, `${sm.commands ?? 0} command(s)`]
+    .concat(sm.compacted ? ['its compaction summary'] : [], sm.dirty ? ['uncommitted diff'] : []).join(' · ');
+  let html = `✓ Context written to <code>${esc(r.relPath)}</code><div class="hosum">${esc(facts)}</div>`;
+  if (mode === 'file') {
+    html += `<p class="dlg-p" style="margin-top:10px">Paste this into ${esc(agentDef(HO.target).name)}'s chat, opened in <code>${esc(shortPath(sm.cwd ?? ''))}</code>:</p>
+      <pre class="wrap mono" id="hoPrompt">${esc(r.prompt)}</pre><button type="button" class="btn small" id="hoCopy">Copy</button>`;
+  } else {
+    html += `<p class="dlg-p" style="margin-top:10px">${esc(r.started ?? 'Started.')}</p>
+      <p class="hosum">It appears in the sidebar as a new session, linked back to this one, once it writes its first turn${HO.target === 'codex' ? ' — Codex chats are not mirrored yet, so follow it on the machine' : ''}.</p>`;
+  }
+  res.innerHTML = html;
+  $('hoCopy')?.addEventListener('click', () => navigator.clipboard.writeText(r.prompt));
+}
+$('hoGo')?.addEventListener('click', doHandoff);
 
 // Phone navigation. Desktop ignores both of these — the class only does anything inside the
 // 760px media query, so the same code drives one layout or two without branching on width.
@@ -1493,7 +1623,7 @@ $('newDevice')?.addEventListener('change', () => { NEWS.browsePath = null; $('br
 async function openPairing() {
   const pairingToken = b64u.enc(randBytes(16));
   const codeHash = await sha256hex(pairingToken);
-  const res = await fetch('/api/pairings', {
+  const res = await fetch(api('/api/pairings'), {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.clientToken}`, 'x-account-id': cfg.accountId },
     body: JSON.stringify({ codeHash }),
@@ -1503,7 +1633,7 @@ async function openPairing() {
   // Point people at the published package, and at THIS relay — not a dev checkout and not
   // localhost. A global install (rather than npx) is required: the background service
   // records the script's path, and an npx temp directory disappears after the run.
-  const cmd = `npm i -g ${TETHERD_PKG}\ntetherd connect '${code}' --relay ${location.origin}`;
+  const cmd = `npm i -g ${TETHERD_PKG}\ntetherd connect '${code}' --relay ${RELAY}`;
   $('pairCmd').textContent = cmd;
   $('pairCopy').onclick = () => navigator.clipboard.writeText(cmd);
   pairDlg.showModal();
@@ -1566,6 +1696,88 @@ function beep() {
   } catch {}
 }
 
+
+// ---------------------------------------------------------------- settings: connection profiles
+// Mobile apps only. A profile is {id, name, relay, invite?}; switching reloads the app so every
+// request, socket and stored sign-in belongs to exactly one relay.
+function saveProfiles() { try { localStorage.setItem(PROFILES_KEY, JSON.stringify(PROFILES)); } catch {} }
+const normRelay = (u) => {
+  let v = String(u ?? '').trim().replace(/\/+$/, '');
+  // No scheme typed: a bare IP or localhost is almost always a relay on the LAN (plain http);
+  // a domain name is a deployed relay (https).
+  if (v && !/^https?:\/\//i.test(v)) v = `${/^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?(\/|$)/i.test(v) ? 'http' : 'https'}://${v}`;
+  try { const x = new URL(v); return (x.protocol === 'http:' || x.protocol === 'https:') && !x.search && !x.hash ? `${x.origin}${x.pathname.replace(/\/+$/, '')}` : null; }
+  catch { return null; }
+};
+let profEditing = null; // id of the profile in the form, or null for a new one
+function renderProfiles() {
+  const el = $('profList');
+  el.innerHTML = PROFILES.list.map((p) => `<div class="profrow ${p.id === PROFILES.active ? 'on' : ''}">
+      <span class="pmain"><b>${esc(p.name)}</b>${p.id === PROFILES.active ? '<span class="ptag">in use</span>' : ''}<span class="ppath">${esc(p.relay)}</span></span>
+      ${p.id === PROFILES.active ? '' : `<button type="button" class="btn small" data-use="${esc(p.id)}">Use</button>`}
+      <button type="button" class="btn ghost small" data-edit="${esc(p.id)}">Edit</button>
+      <button type="button" class="btn ghost small" data-del="${esc(p.id)}" title="Remove">✕</button>
+    </div>`).join('') || '<p class="ihint">No connections yet. Add the relay your machines are paired with.</p>';
+  el.querySelectorAll('[data-use]').forEach((b) => b.addEventListener('click', () => useProfile(b.dataset.use)));
+  el.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => editProfile(b.dataset.edit)));
+  el.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => deleteProfile(b.dataset.del)));
+}
+function editProfile(id) {
+  const p = PROFILES.list.find((x) => x.id === id) ?? null;
+  profEditing = p?.id ?? null;
+  $('profFormTitle').textContent = p ? `Edit “${p.name}”` : 'Add a connection';
+  $('profName').value = p?.name ?? '';
+  $('profRelay').value = p?.relay ?? '';
+  $('profInvite').value = p?.invite ?? '';
+  $('profMsg').textContent = ''; $('profMsg').className = 'err';
+}
+function openSettings() {
+  renderProfiles();
+  editProfile(null);
+  $('settingsDlg').showModal();
+}
+async function testRelay(url) {
+  try {
+    const r = await fetch(`${url}/api/health`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+    const j = await r.json().catch(() => ({}));
+    return r.ok && j.ok ? null : `answering HTTP ${r.status}, but not like a Tether relay`;
+  } catch (e) { return `unreachable (${e.message})`; }
+}
+async function saveProfile(test = false) {
+  const msg = $('profMsg');
+  msg.className = 'err';
+  const name = $('profName').value.trim() || 'My relay';
+  const relay = normRelay($('profRelay').value);
+  if (!relay) { msg.textContent = 'Enter the relay address, e.g. https://tether.example.com or http://192.168.1.20:8787'; return; }
+  msg.className = 'hint'; msg.textContent = `Checking ${relay}…`;
+  const bad = await testRelay(relay);
+  if (bad) { msg.className = 'err'; msg.textContent = `${relay} is ${bad}.`; return; }
+  if (test) { msg.className = 'ok'; msg.textContent = `✓ ${relay} is a working Tether relay.`; return; }
+  const invite = $('profInvite').value.trim() || undefined;
+  if (profEditing) Object.assign(PROFILES.list.find((x) => x.id === profEditing), { name, relay, invite });
+  else { profEditing = randHex(6); PROFILES.list.push({ id: profEditing, name, relay, invite }); }
+  useProfile(profEditing);
+}
+function useProfile(id) {
+  PROFILES.active = id;
+  saveProfiles();
+  location.reload(); // every request, socket and sign-in now belongs to this relay
+}
+function deleteProfile(id) {
+  const p = PROFILES.list.find((x) => x.id === id);
+  if (!p || !confirm(`Remove “${p.name}” (${p.relay}) from this app?\n\nIts sign-in on this phone is forgotten too. Your machines and account are not affected.`)) return;
+  PROFILES.list = PROFILES.list.filter((x) => x.id !== id);
+  try { localStorage.removeItem(`tether@${id}`); } catch {}
+  if (PROFILES.active === id) { PROFILES.active = PROFILES.list[0]?.id ?? null; saveProfiles(); location.reload(); return; }
+  saveProfiles(); renderProfiles();
+}
+$('settingsBtn')?.addEventListener('click', openSettings);
+$('setupSettings')?.addEventListener('click', openSettings);
+$('profNew')?.addEventListener('click', () => editProfile(null));
+$('profSave')?.addEventListener('click', () => saveProfile(false));
+$('profTest')?.addEventListener('click', () => saveProfile(true));
+if (NATIVE && $('setupRelay')) $('setupRelay').textContent = activeProfile() ? `${activeProfile().name} · ${RELAY}` : 'not set';
+
 // ---------------------------------------------------------------- boot
 function boot() {
   $('setup').hidden = true;
@@ -1615,7 +1827,7 @@ $('logoutBtn')?.addEventListener('click', () => {
   } else if (!confirm(`Log out on this browser?\n\nYour paired machines stay connected and keep syncing — this only clears this browser. Sign back in any time as ${cfg.email}.`)) {
     return;
   }
-  localStorage.removeItem('tether');
+  localStorage.removeItem(CFG_KEY);
   location.reload();
 });
 $('pairBtn')?.addEventListener('click', openPairing);
@@ -1912,5 +2124,6 @@ window.addEventListener('unhandledrejection', (e) => {
 // Back gesture / browser back: return to the list instead of unloading the app.
 addEventListener('popstate', () => document.body.classList.remove('on-pane'));
 
-if (cfg?.accountId) boot();
+if (NATIVE && !activeProfile()) { $('setup').hidden = false; openSettings(); } // an app must know its relay first
+else if (cfg?.accountId) boot();
 else $('setup').hidden = false;

@@ -117,6 +117,38 @@ network prompts and managed-settings approval. No hook fires for these — they 
 tool call — so they are shown in the UI but must be answered at the machine. Set
 `remoteApprovals: false` in `~/.tether/config.json` to turn remote approvals off entirely.
 
+## Continue a chat in another agent (handoff)
+
+When Claude Code hits its plan limit, pick the same work up in Cursor or Codex, or the other way
+round, with the context intact. No agent can resume another's native session, so Tether writes
+what a person taking over would need to `<project>/.tether/handoff/<id>.md` (git-ignored):
+
+- the original request and every later request, word for word;
+- Claude Code's own compaction summary, when there is one;
+- the plan and to-dos, the files changed and the commands run;
+- the current git status and uncommitted diff;
+- the latest turns, verbatim.
+
+A searchable copy of the whole conversation sits next to it. The new agent starts with a
+one-line prompt that points at the file. No model writes the summary: the agent that just hit
+its limit can't be the one to write it.
+
+- **Web UI:** open a session → **Continue in…** → pick the agent and how it should run
+  (interactive in tmux, a headless run, or just write the file and paste one line into an IDE
+  chat). When a session stops on a plan limit, a banner offers the same thing. The new session
+  links back to the one it continues, and the other way round.
+- **CLI:** `tetherd sessions` lists chats for the current folder (`--all` for every folder).
+  `tetherd handoff <id|latest> --to cursor` starts the target in your terminal with the context
+  loaded. Other flags: `--headless`, `--file-only`, `--note "…"`, `--model`, `--mode`.
+- **From inside any agent:** `tetherd mcp install` (also run by `tetherd connect`) adds a
+  `tether-sessions` MCP server to Claude Code, Cursor and Codex. It has two tools, `list_sessions`
+  and `get_session_context`, so in Cursor's chat you can just ask *"load my latest Claude Code
+  session for this project"*.
+
+Claude Code and Cursor chats can be the source. Codex keeps its sessions in SQLite, so it can
+be a target but not a source yet. Devin runs in the cloud and can't see local uncommitted work;
+it needs its own adapter.
+
 ## Failure doctrine
 
 Every mechanism degrades to exactly what happens without Tether: daemon down → sessions run

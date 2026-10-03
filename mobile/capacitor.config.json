@@ -1,0 +1,21 @@
+{
+  "appId": "ai.astrakratos.tether",
+  "appName": "Tether",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "adjustMarginsForEdgeToEdge": "force",
+    "backgroundColor": "#090C10"
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#090C10"
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  }
+}

@@ -14,12 +14,17 @@ import { Transport } from './transport.mjs';
 import { Executor } from './executor.mjs';
 import { detectAgents, installFor, removeFor, rootsFor, INTEGRATIONS } from './agents.mjs';
 import { serviceFor, killStrays, terminalBackend } from './service.mjs';
+import {
+  AGENT_NAMES, HANDOFF_TARGETS, HANDOFF_REF_RE, LIMIT_RE, cwdFromCursorPath, listSessions, resolveSession,
+  buildHandoff, writeHandoff, handoffPrompt, recordHandoff, linkHandoff,
+} from './handoff.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PKG = (() => { try { return JSON.parse(fs.readFileSync(path.join(HERE, '..', 'package.json'), 'utf8')); } catch { return {}; } })();
 const VERSION = PKG.version ?? 'dev';
 const PKG_NAME = PKG.name ?? 'tetherd';
-const TETHER_DIR = path.join(os.homedir(), '.tether');
+// TETHER_HOME lets a second, isolated daemon run beside the real one (tests, a second account).
+const TETHER_DIR = process.env.TETHER_HOME || path.join(os.homedir(), '.tether');
 const ID_PATH = path.join(TETHER_DIR, 'identity.json');
 const CFG_PATH = path.join(TETHER_DIR, 'config.json');
 const STATE_PATH = path.join(TETHER_DIR, 'state.json');
@@ -101,25 +106,6 @@ function cmdRun() {
     for (const r of rootDefs) if (file.startsWith(r.path) && (!best || r.path.length > best.path.length)) best = r;
     return best?.agent || 'claude';
   };
-  // Cursor names its project folders by encoding the workspace path with '-' separators
-  // (Users-you-Projects-my-app). Segment names can themselves contain '-',
-  // so resolve greedily against the filesystem instead of naively splitting.
-  const decodeProjectPath = (enc) => {
-    const parts = String(enc).replace(/^-/, '').split('-');
-    let cur = '', i = 0;
-    while (i < parts.length) {
-      let piece = parts[i], j = i, next = `${cur}/${piece}`;
-      while (!fs.existsSync(next) && j + 1 < parts.length) { j++; piece += `-${parts[j]}`; next = `${cur}/${piece}`; }
-      if (!fs.existsSync(next)) return null;
-      cur = next; i = j + 1;
-    }
-    return cur || null;
-  };
-  // …/projects/<encoded>/agent-transcripts/<id>/<id>.jsonl -> the workspace it belongs to
-  const cwdFromCursorPath = (file) => {
-    const m = String(file).match(/\/\.cursor\/projects\/([^/]+)\//);
-    return m ? decodeProjectPath(m[1]) : null;
-  };
   const cleanTitle = (t) => String(t)
     .replace(/<timestamp>[\s\S]*?<\/timestamp>/g, '')
     .replace(/<\/?user_query>/g, '')
@@ -149,6 +135,9 @@ function cmdRun() {
       if (saved?.cwd) s.meta.cwd = saved.cwd;
       if (saved?.projectCwd) s.meta.projectCwd = saved.projectCwd;
       if (saved?.title) s.title = saved.title; // survive restarts; else the UI renames the chat
+      // where this chat came from / went to, and whether it stopped on a plan limit
+      for (const k of ['handoffFrom', 'handoffTo', 'limitHit']) if (saved?.[k]) s.meta[k] = saved[k];
+      if (saved?.handoffChecked) s.handoffChecked = true;
       if (!file && saved?.file) s.file = saved.file;
       sessions.set(sid, s);
     }
@@ -167,7 +156,11 @@ function cmdRun() {
       persistTimer = null;
       for (const s of sessions.values()) {
         state.cursors[s.sid] = s.cursor;
-        if (s.meta.cwd) state.meta[s.sid] = { cwd: s.meta.cwd, file: s.file, title: s.title ?? null, projectCwd: s.meta.projectCwd ?? s.meta.cwd };
+        if (s.meta.cwd) {
+          state.meta[s.sid] = { cwd: s.meta.cwd, file: s.file, title: s.title ?? null, projectCwd: s.meta.projectCwd ?? s.meta.cwd };
+          for (const k of ['handoffFrom', 'handoffTo', 'limitHit']) if (s.meta[k]) state.meta[s.sid][k] = s.meta[k];
+          if (s.handoffChecked) state.meta[s.sid].handoffChecked = true;
+        }
       }
       saveJSON(STATE_PATH, state);
     }, 1000);
@@ -409,6 +402,67 @@ function cmdRun() {
     return a < 0 || b < 0 ? null : (b - a + MODE_CYCLE.length) % MODE_CYCLE.length;
   };
 
+  // A session whose opening request points at a handoff file was started from another chat.
+  // Link both ways, so each side of the web UI can jump to the other.
+  function linkHandedOff(s, id) {
+    const rec = linkHandoff(id, s.sid);
+    if (!rec) return;
+    s.meta.handoffFrom = { id, sessionId: rec.from?.sessionId ?? null, agent: rec.from?.agent ?? null, title: rec.from?.title ?? null };
+    s.metaDirty = true;
+    const src = rec.from?.sessionId ? sessions.get(rec.from.sessionId) : null;
+    if (src) {
+      const to = (src.meta.handoffTo ?? []).find((t) => t.id === id);
+      if (to && to.sessionId !== s.sid) { to.sessionId = s.sid; src.metaDirty = true; if (src.announced) announce(src); }
+    }
+    log(`handoff ${id}: ${s.agent} session ${s.sid.slice(0, 8)} continues ${rec.from?.agent ?? '?'} session ${String(rec.from?.sessionId ?? '?').slice(0, 8)}`);
+    persist();
+  }
+
+  // Hand a session over to another agent: write the context into the project, then start the
+  // target with it. mode: 'interactive' (tmux TUI), 'headless' (one-shot run) or 'file' (write
+  // only — for an IDE chat the person drives themselves).
+  async function startHandoff(req) {
+    let src = sessions.get(req.sessionId);
+    if (!src && state.meta[req.sessionId]) src = getSession(req.sessionId, state.meta[req.sessionId].file);
+    if (!src) src = hydrateFromFile(req.sessionId);
+    if (!src?.file || !fs.existsSync(src.file)) return { error: 'this session\'s transcript is not on this machine' };
+    const target = HANDOFF_TARGETS.includes(req.target) ? req.target : null;
+    if (!target) return { error: `cannot hand off to "${req.target}"` };
+    const mode = ['interactive', 'headless', 'file'].includes(req.mode) ? req.mode : 'interactive';
+    const cwd = src.meta.projectCwd || src.meta.cwd || cwdFromCursorPath(src.file);
+    if (!cwd || !fs.existsSync(cwd)) return { error: `the session's project folder is missing (${cwd ?? 'unknown'})` };
+    const note = typeof req.note === 'string' ? req.note.slice(0, 4000) : null;
+    let h, w;
+    try {
+      h = buildHandoff({ file: src.file, agent: src.agent, sessionId: src.sid, cwd, title: src.title, target, note });
+      w = writeHandoff(h, cwd);
+    } catch (e) { return { error: `could not write the handoff: ${e.message}` }; }
+    const prompt = handoffPrompt({ relPath: w.relPath, source: src.agent, note });
+    recordHandoff({ id: h.id, from: { sessionId: src.sid, agent: src.agent, title: src.title ?? h.summary.title }, to: { agent: target }, cwd, path: w.path, mode });
+    src.meta.handoffTo = [...(src.meta.handoffTo ?? []), { id: h.id, agent: target, at: Date.now(), sessionId: null }].slice(-10);
+    src.metaDirty = true;
+    if (transport.ready) announce(src);
+    persist();
+    log(`handoff ${h.id}: ${src.agent} ${src.sid.slice(0, 8)} -> ${target} (${mode}) at ${w.path}`);
+    const out = { ok: true, id: h.id, path: w.path, relPath: w.relPath, prompt, mode, target, summary: h.summary };
+    if (mode === 'file') return out;
+    // Interactive: answer once the agent is up (or failed to start). Headless: answer once it is
+    // running — the run itself can take minutes, and its outcome shows up as a new session.
+    return new Promise((resolve) => {
+      let answered = false;
+      const answer = (extra) => { if (!answered) { answered = true; resolve({ ...out, ...extra }); } };
+      executor.startHandoff({ promptId: h.id, agent: target, cwd, text: prompt, interactive: mode === 'interactive', opts: req.opts ?? null },
+        (status, detail) => {
+          if (status === 'failed') {
+            if (answered) noteError(`handoff ${h.id} to ${target}: ${detail}`);
+            answer({ ok: false, error: detail });
+          } else if (status === 'done' || (status === 'executing' && mode === 'headless')) {
+            answer({ started: detail ?? `${AGENT_NAMES[target] ?? target} is running headless` });
+          }
+        });
+    });
+  }
+
   const runPrompt = (job) => {
     const report = (status, detail) => {
       if (status === 'failed') noteError(`prompt ${job.promptId}: ${detail}`);
@@ -477,6 +531,19 @@ function cmdRun() {
         Object.assign(s.meta, meta);
         if (meta.cwd && !s.meta.projectCwd) s.meta.projectCwd = meta.cwd;
         s.metaDirty = true;
+      }
+      // A real model turn after a plan limit means the limit lifted (or the model changed).
+      if (meta?.model && s.meta.limitHit) { delete s.meta.limitHit; s.metaDirty = true; }
+      for (const ev of events) {
+        if (ev.kind !== 'text') continue;
+        if (ev.role === 'assistant' && ev.model === '<synthetic>' && LIMIT_RE.test(ev.text ?? '')) {
+          s.meta.limitHit = { text: String(ev.text).replace(/\s+/g, ' ').trim().slice(0, 200), ts: ev.ts ?? new Date().toISOString() };
+          s.metaDirty = true;
+        } else if (ev.role === 'user' && !s.handoffChecked) {
+          s.handoffChecked = true; // only the opening request can be a handoff
+          const m = String(ev.text ?? '').match(HANDOFF_REF_RE);
+          if (m) linkHandedOff(s, m[1]);
+        }
       }
       if (title && title !== s.title) { s.title = title; s.metaDirty = true; }
       if (!s.title) { // agents like Cursor never emit a title: use the opening request
@@ -800,6 +867,7 @@ function cmdRun() {
       }, 1200);
       return { ok: true, results, note: 'hooks removed; sync service stopping' };
     }
+    if (req.op === 'handoff') return startHandoff(req);
     if (req.op === 'live') { // is this session reachable as a live terminal?
       const pane = paneForSession(req.sessionId);
       if (pane) return { live: true, label: pane.label };
@@ -1142,6 +1210,9 @@ async function cmdConnect() {
     if (r.ok) keys.push(a.key);
   }
 
+  // session context for every agent, so any of them can pick up another's chat
+  for (const r of installMcpFor(keys)) console.log(`  ${r.name} (sessions MCP): ${r.detail}`);
+
   // watch roots: every agent whose transcripts Tether can actually tail
   const roots = rootsFor(keys);
   const cfg = loadJSON(CFG_PATH, {});
@@ -1197,6 +1268,8 @@ function cmdDisconnect() {
     console.log(`  ${r.ok ? '✓' : '✗'} ${INTEGRATIONS[key].name}: ${r.detail}`);
   }
 
+  for (const r of removeMcpAll()) console.log(`  · ${r.name} (sessions MCP): ${r.detail}`);
+
   // stop any daemon still running outside launchd
   killStrays();
   console.log('  ✓ stopped any running daemon');
@@ -1209,6 +1282,195 @@ function cmdDisconnect() {
     for (const f of [ID_PATH, STATE_PATH]) { try { fs.unlinkSync(f); console.log(`  ✓ deleted ${f}`); } catch {} }
     console.log('\nThis machine is fully unpaired. Pair again with: tetherd connect <code>');
   }
+}
+
+// ---------------------------------------------------------------- sessions / handoff
+// Continue a chat in a different agent: when Claude Code hits its limit, pick the work up in
+// Cursor or Codex with the same context (and the other way round). See handoff.mjs.
+const AGENT_CLI = { claude: 'claude', cursor: 'cursor-agent', codex: 'codex' };
+const HEADLESS_ARGS = { claude: (t) => ['-p', t], cursor: (t) => ['-p', t], codex: (t) => ['exec', t] };
+const agoText = (ms) => {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  return s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+};
+
+function cmdSessions() {
+  const all = process.argv.includes('--all');
+  const cwd = all ? null : path.resolve(arg('--cwd', process.cwd()));
+  const rows = listSessions({ cwd, agent: arg('--agent', null), limit: Number(arg('--limit', 20)) || 20 });
+  if (!rows.length) {
+    console.log(cwd ? `No sessions for ${cwd}. Use --all to list every project.` : 'No sessions found.');
+    return;
+  }
+  for (const r of rows) {
+    console.log(`${r.sessionId.slice(0, 8)}  ${(AGENT_NAMES[r.agent] ?? r.agent).padEnd(11)}  ${agoText(r.updatedAt).padEnd(8)}  ${r.title ?? '(untitled)'}${all && r.cwd ? `  — ${r.cwd}` : ''}`);
+  }
+  console.log(`\nContinue one elsewhere with: tetherd handoff <id> --to claude|cursor|codex`);
+}
+
+function cmdHandoff() {
+  const ref = process.argv[3] && !process.argv[3].startsWith('--') ? process.argv[3] : 'latest';
+  const target = arg('--to', null);
+  if (!HANDOFF_TARGETS.includes(target)) {
+    console.error('usage: tetherd handoff [<session-id>|latest] --to claude|cursor|codex [--cwd <dir>] [--note "..."] [--headless | --file-only] [--model m] [--mode acceptEdits|plan|…]');
+    console.error('       (see ids with: tetherd sessions)');
+    process.exit(1);
+  }
+  const cwdArg = arg('--cwd', null) ? path.resolve(arg('--cwd')) : null;
+  let src;
+  try { src = resolveSession(ref, { cwd: ref === 'latest' ? (cwdArg ?? process.cwd()) : null }); }
+  catch (e) { console.error(`${e.message}. See: tetherd sessions --all`); process.exit(1); }
+  const cwd = cwdArg ?? src.cwd;
+  if (!cwd || !fs.existsSync(cwd)) {
+    console.error(`The session's project folder is missing (${cwd ?? 'unknown'}). Pass --cwd <folder> to write the handoff there.`);
+    process.exit(1);
+  }
+  const note = arg('--note', null);
+  const h = buildHandoff({ file: src.file, agent: src.agent, sessionId: src.sessionId, cwd, title: src.title, target, note });
+  const w = writeHandoff(h, cwd);
+  const prompt = handoffPrompt({ relPath: w.relPath, source: src.agent, note });
+  const mode = process.argv.includes('--file-only') ? 'file' : process.argv.includes('--headless') ? 'headless' : 'interactive';
+  recordHandoff({ id: h.id, from: { sessionId: src.sessionId, agent: src.agent, title: src.title ?? h.summary.title }, to: { agent: target }, cwd, path: w.path, mode });
+  const sm = h.summary;
+  console.log(`Handoff ${h.id}: ${AGENT_NAMES[src.agent]} "${sm.title}" -> ${AGENT_NAMES[target]}`);
+  console.log(`  ${sm.requests} request(s), ${sm.filesChanged} file(s) changed, ${sm.commands} command(s)${sm.compacted ? ', includes its compaction summary' : ''}${sm.limitHit ? `, stopped on: ${sm.limitHit}` : ''}`);
+  console.log(`  written to ${w.path}`);
+  if (mode === 'file') {
+    console.log(`\nPaste this into ${AGENT_NAMES[target]}:\n\n${prompt}\n`);
+    return;
+  }
+  const cfg = loadJSON(CFG_PATH, {});
+  const bin = target === 'claude' ? (cfg.claudeBin || 'claude') : AGENT_CLI[target];
+  const args = mode === 'headless' ? HEADLESS_ARGS[target](prompt) : [prompt];
+  // the same runtime options the web UI offers: a model, and Claude Code's permission mode
+  const model = arg('--model', null), pmode = arg('--mode', null);
+  if (model && /^[A-Za-z0-9 ._\/:@,\[\]-]{1,100}$/.test(model)) args.unshift(target === 'codex' ? '-m' : '--model', model);
+  if (pmode && target === 'claude') args.unshift('--permission-mode', pmode);
+  console.log(`  starting ${bin}${mode === 'headless' ? ' (headless)' : ''} in ${cwd}\n`);
+  const env = { ...process.env, PATH: `${process.env.PATH ?? ''}:/usr/local/bin:/opt/homebrew/bin:${path.join(os.homedir(), '.local', 'bin')}` };
+  const child = spawnProcess(bin, args, { cwd, stdio: 'inherit', env });
+  child.on('error', (e) => { console.error(`could not start ${bin}: ${e.message}`); process.exit(1); });
+  child.on('exit', (code) => process.exit(code ?? 0));
+}
+
+// ---------------------------------------------------------------- MCP server (session context)
+// `tether-sessions` gives any MCP-capable agent list_sessions / get_session_context. Like the
+// hook shim it runs from ~/.tether/bin, so an npm upgrade or npx cleanup cannot break it.
+const MCP_NAME = 'tether-sessions';
+const MCP_FILES = ['context-mcp.mjs', 'handoff.mjs'];
+const mcpEntry = () => ({ command: process.execPath, args: [path.join(TETHER_DIR, 'bin', 'context-mcp.mjs')] });
+const CODEX_TOML = () => path.join(os.homedir(), '.codex', 'config.toml');
+const CODEX_BEGIN = '# >>> tether-sessions (managed by tetherd)';
+const CODEX_END = '# <<< tether-sessions';
+
+function installMcpFiles() {
+  const dir = path.join(TETHER_DIR, 'bin');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of MCP_FILES) fs.copyFileSync(path.join(HERE, f), path.join(dir, f));
+}
+
+// Each installer returns a one-line status; none of them touches anything but our own entry.
+const MCP_INSTALLERS = {
+  claude: {
+    name: 'Claude Code',
+    install() {
+      const cfg = loadJSON(CFG_PATH, {});
+      const bin = cfg.claudeBin || 'claude';
+      sh(bin, ['mcp', 'remove', '--scope', 'user', MCP_NAME]); // re-add fresh: the path may have moved
+      const e = mcpEntry();
+      const r = sh(bin, ['mcp', 'add', '--scope', 'user', MCP_NAME, '--', e.command, ...e.args]);
+      return r.ok ? `added "${MCP_NAME}" (user scope)` : `failed: ${r.out.slice(0, 160)}`;
+    },
+    remove() {
+      const cfg = loadJSON(CFG_PATH, {});
+      const r = sh(cfg.claudeBin || 'claude', ['mcp', 'remove', '--scope', 'user', MCP_NAME]);
+      return r.ok ? `removed "${MCP_NAME}"` : 'not installed';
+    },
+  },
+  cursor: {
+    name: 'Cursor',
+    file: () => path.join(os.homedir(), '.cursor', 'mcp.json'),
+    install() {
+      const f = this.file();
+      const cfg = loadJSON(f, {});
+      if (fs.existsSync(f)) fs.copyFileSync(f, `${f}.tether-backup-${Date.now()}`);
+      cfg.mcpServers = { ...(cfg.mcpServers ?? {}), [MCP_NAME]: mcpEntry() };
+      saveJSON(f, cfg);
+      return `added "${MCP_NAME}" -> ${f}`;
+    },
+    remove() {
+      const f = this.file();
+      const cfg = loadJSON(f, null);
+      if (!cfg?.mcpServers?.[MCP_NAME]) return 'not installed';
+      fs.copyFileSync(f, `${f}.tether-backup-${Date.now()}`);
+      delete cfg.mcpServers[MCP_NAME];
+      saveJSON(f, cfg);
+      return `removed "${MCP_NAME}" from ${f}`;
+    },
+  },
+  codex: {
+    name: 'Codex',
+    install() {
+      const f = CODEX_TOML();
+      let txt = ''; try { txt = fs.readFileSync(f, 'utf8'); } catch {}
+      if (txt) fs.copyFileSync(f, `${f}.tether-backup-${Date.now()}`);
+      txt = stripCodexBlock(txt);
+      const e = mcpEntry();
+      const block = `${CODEX_BEGIN}\n[mcp_servers.${MCP_NAME}]\ncommand = ${JSON.stringify(e.command)}\nargs = [${e.args.map((a) => JSON.stringify(a)).join(', ')}]\n${CODEX_END}\n`;
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, `${txt}${txt && !txt.endsWith('\n') ? '\n' : ''}${txt ? '\n' : ''}${block}`);
+      return `added [mcp_servers.${MCP_NAME}] -> ${f}`;
+    },
+    remove() {
+      const f = CODEX_TOML();
+      let txt; try { txt = fs.readFileSync(f, 'utf8'); } catch { return 'not installed'; }
+      if (!txt.includes(CODEX_BEGIN)) return 'not installed';
+      fs.copyFileSync(f, `${f}.tether-backup-${Date.now()}`);
+      fs.writeFileSync(f, stripCodexBlock(txt));
+      return `removed [mcp_servers.${MCP_NAME}] from ${f}`;
+    },
+  },
+};
+function stripCodexBlock(txt) {
+  const a = txt.indexOf(CODEX_BEGIN), b = txt.indexOf(CODEX_END);
+  if (a < 0 || b < 0) return txt;
+  return (txt.slice(0, a) + txt.slice(b + CODEX_END.length).replace(/^\n/, '')).replace(/\n{3,}$/, '\n\n');
+}
+
+function installMcpFor(keys) {
+  installMcpFiles();
+  return keys.filter((k) => MCP_INSTALLERS[k]).map((k) => {
+    let detail; try { detail = MCP_INSTALLERS[k].install(); } catch (e) { detail = `failed: ${e.message}`; }
+    return { key: k, name: MCP_INSTALLERS[k].name, detail };
+  });
+}
+function removeMcpAll() {
+  return Object.entries(MCP_INSTALLERS).map(([k, m]) => {
+    let detail; try { detail = m.remove(); } catch (e) { detail = `failed: ${e.message}`; }
+    return { key: k, name: m.name, detail };
+  });
+}
+
+function cmdMcp() {
+  const sub = process.argv[3];
+  if (sub === 'print' || !sub) {
+    console.log(JSON.stringify({ mcpServers: { [MCP_NAME]: mcpEntry() } }, null, 2));
+    if (!sub) console.log('\nInstall into every agent found with: tetherd mcp install   (or --for claude,cursor,codex)');
+    return;
+  }
+  if (sub === 'install') {
+    const only = arg('--for', null);
+    const keys = only ? only.split(',').map((x) => x.trim()) : detectAgents().map((a) => a.key);
+    for (const r of installMcpFor(keys)) console.log(`  ${r.name}: ${r.detail}`);
+    console.log(`\nIn any of them, ask: "load my latest Claude Code session for this project" (tools: list_sessions, get_session_context).`);
+    return;
+  }
+  if (sub === 'uninstall') {
+    for (const r of removeMcpAll()) console.log(`  ${r.name}: ${r.detail}`);
+    return;
+  }
+  console.error('usage: tetherd mcp print | install [--for claude,cursor,codex] | uninstall');
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------- relay (self-hosting)
@@ -1247,6 +1509,9 @@ else if (cmd === 'relay-service') cmdRelayService();
 else if (cmd === 'connect') cmdConnect();
 else if (cmd === 'disconnect') cmdDisconnect();
 else if (cmd === 'status') cmdStatus();
+else if (cmd === 'sessions') cmdSessions();
+else if (cmd === 'handoff') cmdHandoff();
+else if (cmd === 'mcp') cmdMcp();
 else {
   console.log('tetherd — mirror & control local agent sessions remotely');
   console.log('usage: tetherd pair <code> [--relay url] [--name name]');
@@ -1258,5 +1523,8 @@ else {
   console.log('       tetherd hooks print | install --settings <path>');
   console.log('       tetherd launchd install');
   console.log('       tetherd status');
+  console.log('       tetherd sessions [--all]              # chats on this machine');
+  console.log('       tetherd handoff [<id>|latest] --to claude|cursor|codex [--note ".."] [--headless|--file-only]');
+  console.log('       tetherd mcp print | install | uninstall   # let any agent load another\'s session');
   process.exit(cmd ? 1 : 0);
 }
